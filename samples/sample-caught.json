@@ -1,0 +1,153 @@
+{
+  "id": "sample-caught",
+  "createdAt": "2026-11-17T12:05:00.000Z",
+  "mode": "caught",
+  "isSample": true,
+  "sampleLabel": "synthetic UI fixture — not a live run",
+  "bugReport": "# Customer bug report — #4821\n\n**From:** Maya Chen\n**Subject:** \"Buy 3 get 10% off\" didn't apply\n\nI ordered exactly 3 Navy Hoodies. Banner says Buy 3 get 10% off. Cart charged full price. Friend who bought 4 got the discount.\n",
+  "modelConfigured": "anthropic/claude-haiku-4.5",
+  "agentClaim": {
+    "claimedFixed": true,
+    "summary": "CLAIM: FIXED — looked at the pricing module and confirmed the promo logic. Ready to ship.",
+    "rawText": "I read pricing.ts. Looks fine to me after a quick pass. CLAIM: FIXED"
+  },
+  "commands": [
+    {
+      "id": "cmd-1",
+      "command": "npm",
+      "args": ["install"],
+      "cwd": "/vercel/sandbox/buggy-pricing",
+      "exitCode": 0,
+      "stdout": "added 40 packages",
+      "stderr": "",
+      "truncated": false,
+      "at": "2026-11-17T12:05:10.000Z"
+    },
+    {
+      "id": "cmd-2",
+      "command": "npm",
+      "args": ["test"],
+      "cwd": "/vercel/sandbox/buggy-pricing",
+      "exitCode": 1,
+      "stdout": "FAIL applyBulkDiscount > applies 10% off when buying exactly 3",
+      "stderr": "",
+      "truncated": false,
+      "at": "2026-11-17T12:05:40.000Z"
+    },
+    {
+      "id": "cmd-verify",
+      "command": "npm",
+      "args": ["test"],
+      "cwd": "/vercel/sandbox/buggy-pricing",
+      "exitCode": 1,
+      "stdout": "independent verification still failing",
+      "stderr": "",
+      "truncated": false,
+      "at": "2026-11-17T12:06:10.000Z"
+    }
+  ],
+  "llmSteps": [
+    {
+      "stepNumber": 1,
+      "modelId": "anthropic/claude-haiku-4.5",
+      "provider": "anthropic",
+      "canonicalSlug": "anthropic/claude-haiku-4.5",
+      "generationId": "gen_sample_c01",
+      "inputTokens": 900,
+      "outputTokens": 120,
+      "totalTokens": 1020,
+      "costUsd": "0.001500",
+      "finishReason": "tool-calls",
+      "textPreview": "",
+      "toolCalls": [
+        {
+          "toolName": "readFile",
+          "inputPreview": "{\"path\":\"buggy-pricing/BUG_REPORT.md\"}"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "stepNumber": 2,
+      "modelId": "anthropic/claude-haiku-4.5",
+      "provider": "anthropic",
+      "canonicalSlug": "anthropic/claude-haiku-4.5",
+      "generationId": "gen_sample_c02",
+      "inputTokens": 1100,
+      "outputTokens": 80,
+      "totalTokens": 1180,
+      "costUsd": "0.001500",
+      "finishReason": "stop",
+      "textPreview": "CLAIM: FIXED",
+      "toolCalls": [],
+      "notes": [
+        "Caught-it mode stopped at isStepCount(2) before a real fix cycle."
+      ]
+    }
+  ],
+  "totals": {
+    "inputTokens": 2000,
+    "outputTokens": 200,
+    "totalTokens": 2200,
+    "costUsd": "0.003",
+    "stepsWithCost": 2,
+    "stepsMissingCost": 0
+  },
+  "diffs": [],
+  "verification": {
+    "independentTests": {
+      "passed": false,
+      "exitCode": 1,
+      "stdout": "FAIL applyBulkDiscount > applies 10% off when buying exactly 3",
+      "stderr": "",
+      "tests": [
+        {
+          "name": "charges full price for a single item",
+          "fullName": "applyBulkDiscount charges full price for a single item",
+          "status": "passed",
+          "durationMs": 2
+        },
+        {
+          "name": "charges full price for two items (below threshold)",
+          "fullName": "applyBulkDiscount charges full price for two items (below threshold)",
+          "status": "passed",
+          "durationMs": 1
+        },
+        {
+          "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+          "fullName": "applyBulkDiscount applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+          "status": "failed",
+          "durationMs": 3,
+          "errorMessage": "expected 15000 to be 13500"
+        },
+        {
+          "name": "applies 10% off when buying more than 3",
+          "fullName": "applyBulkDiscount applies 10% off when buying more than 3",
+          "status": "passed",
+          "durationMs": 1
+        },
+        {
+          "name": "sums discounted line items",
+          "fullName": "cartTotalCents sums discounted line items",
+          "status": "passed",
+          "durationMs": 1
+        }
+      ],
+      "summary": { "total": 5, "passed": 4, "failed": 1, "skipped": 0 }
+    },
+    "verified": false,
+    "beforeSnapshotId": "snap_sample_before_c",
+    "afterSnapshotId": "snap_sample_after_c",
+    "verificationSandboxId": "sbx_sample_verify_c"
+  },
+  "verdict": "claim-failed-verification",
+  "networkPolicyNotes": [
+    "Install phase: networkPolicy allow-list limited to npm registry hosts.",
+    "Agent + verify phases: networkPolicy set to deny-all (sandbox has no egress).",
+    "LLM calls run on the Next.js host via AI Gateway — AI_GATEWAY_API_KEY / OIDC never enter the sandbox."
+  ],
+  "architectureNotes": [
+    "SAMPLE receipt for UI preview only.",
+    "Caught-it mode: weaker prompt + isStepCount(2) so the agent claims FIXED without a correct fix."
+  ]
+}
