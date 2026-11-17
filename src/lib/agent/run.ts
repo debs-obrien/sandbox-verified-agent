@@ -182,6 +182,7 @@ export async function runVerifiedAgent(options: {
     agentSandbox = null; // already stopped by snapshot()
 
     // Independent verification in a FRESH sandbox from the after-snapshot.
+    // Harness files are restored from the host fixture before tests run.
     const verify = await independentVerify(after.snapshotId, commandLog);
 
     const verified = verify.tests.passed === true;
@@ -216,7 +217,7 @@ export async function runVerifiedAgent(options: {
       },
       verdict,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
-      architectureNotes: architectureNotes(mode, maxSteps),
+      architectureNotes: architectureNotes(mode, maxSteps, verify.restoredHarness),
     };
 
     await saveReceipt(receipt);
@@ -267,12 +268,19 @@ export async function runVerifiedAgent(options: {
   }
 }
 
-function architectureNotes(mode?: DemoMode, maxSteps?: number): string[] {
+function architectureNotes(
+  mode?: DemoMode,
+  maxSteps?: number,
+  restoredHarness?: string[],
+): string[] {
   return [
     `Fixture workspace inside sandbox: ${WORKSPACE_ROOT}`,
     "LLM (AI SDK ToolLoopAgent) runs on the Next.js host via AI Gateway — not inside the sandbox.",
-    "Sandbox tools: runCommand, readFile, writeFile (SDK from host).",
-    "Verification: snapshot before → agent work → snapshot after → restore after into a fresh sandbox → re-run vitest.",
+    "Sandbox tools: runCommand, readFile, writeFile (writeFile allowlisted to src/pricing.ts only).",
+    "Verification: snapshot before → agent work → snapshot after → fresh sandbox → restore pristine harness from host → clear vitest-results.json → re-run vitest.",
+    restoredHarness?.length
+      ? `Restored trusted harness files before verify: ${restoredHarness.join(", ")}.`
+      : "Trusted harness restore runs before independent verify.",
     mode
       ? `Mode=${mode}; stopWhen=isStepCount(${maxSteps ?? "?"}).`
       : "Mode unset.",

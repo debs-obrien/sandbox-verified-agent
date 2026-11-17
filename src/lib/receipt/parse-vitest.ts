@@ -32,8 +32,13 @@ function mapStatus(status: string | undefined): TestCaseResult["status"] {
 }
 
 /**
- * Parse Vitest JSON reporter output into a stable TestSuiteResult.
- * Falls back to exit-code-only summary when JSON is missing/malformed.
+ * A suite passes only when ALL of these hold:
+ * - command exitCode === 0
+ * - zero failed assertions
+ * - json.success is not explicitly false (when present)
+ * - at least one test case was parsed (avoids green-on-empty / stale-missing reports)
+ *
+ * A success:true report never overrides a nonzero exit code.
  */
 export function parseVitestJson(
   raw: string | null | undefined,
@@ -45,15 +50,15 @@ export function parseVitestJson(
 
   if (!raw) {
     return {
-      passed: exitCode === 0,
+      passed: false,
       exitCode,
       stdout,
       stderr,
       tests: [],
       summary: {
         total: 0,
-        passed: exitCode === 0 ? 0 : 0,
-        failed: exitCode === 0 ? 0 : 0,
+        passed: 0,
+        failed: 0,
         skipped: 0,
       },
     };
@@ -88,8 +93,14 @@ export function parseVitestJson(
     const total =
       json.numTotalTests ?? passedCount + failedCount + skippedCount;
 
+    const passed =
+      exitCode === 0 &&
+      failedCount === 0 &&
+      json.success !== false &&
+      tests.length > 0;
+
     return {
-      passed: json.success === true || (exitCode === 0 && failedCount === 0),
+      passed,
       exitCode,
       stdout,
       stderr,
@@ -103,7 +114,7 @@ export function parseVitestJson(
     };
   } catch {
     return {
-      passed: exitCode === 0,
+      passed: false,
       exitCode,
       stdout,
       stderr,

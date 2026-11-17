@@ -3,9 +3,11 @@ import { WORKSPACE_ROOT } from "../config";
 import { parseVitestJson } from "../receipt/parse-vitest";
 import type { CommandLog, TestSuiteResult, Unavailable } from "../types";
 import { runLogged } from "./commands";
+import { restoreTrustedHarness } from "./harness";
 import { createSandboxFromSnapshot } from "./setup";
 
 const UNAVAILABLE: Unavailable = "unavailable";
+const RESULTS_PATH = "buggy-pricing/vitest-results.json";
 
 /**
  * Snapshot the current sandbox filesystem. Note: snapshot() stops the session.
@@ -19,9 +21,25 @@ export async function takeSnapshot(
   return { snapshotId: snap.snapshotId };
 }
 
+async function clearStaleResults(sandbox: Sandbox): Promise<void> {
+  // Empty / missing report forces a fresh parse; never reuse a prior JSON file.
+  await sandbox.writeFiles([
+    { path: RESULTS_PATH, content: Buffer.from("", "utf8") },
+  ]);
+}
+
+async function readFreshResults(
+  sandbox: Sandbox,
+): Promise<string | null> {
+  const buf = await sandbox.readFileToBuffer({ path: RESULTS_PATH });
+  const text = buf?.toString("utf8")?.trim() ?? "";
+  return text.length > 0 ? text : null;
+}
+
 /**
- * Restore the after-snapshot into a FRESH sandbox and re-run the full test
- * suite independently of the agent. This is the verification half of the demo.
+ * Restore the after-snapshot into a FRESH sandbox, reinstall trust in the
+ * test harness from the host fixture, then re-run Vitest. Agent edits to
+ * tests/config/lockfile cannot survive into the verification evidence.
  */
 export async function independentVerify(
   afterSnapshotId: string,
@@ -29,10 +47,14 @@ export async function independentVerify(
 ): Promise<{
   tests: TestSuiteResult;
   verificationSandboxId: string;
+  restoredHarness: string[];
 }> {
   const verifyBox = await createSandboxFromSnapshot(afterSnapshotId);
 
   try {
+    const restoredHarness = await restoreTrustedHarness(verifyBox);
+    await clearStaleResults(verifyBox);
+
     const run = await runLogged(verifyBox, {
       cmd: "npm",
       args: ["test"],
@@ -40,12 +62,7 @@ export async function independentVerify(
       log: commandLog,
     });
 
-    // Vitest JSON reporter writes vitest-results.json in the fixture cwd.
-    const buf = await verifyBox.readFileToBuffer({
-      path: "buggy-pricing/vitest-results.json",
-    });
-    const jsonText = buf?.toString("utf8") ?? null;
-
+    const jsonText = await readFreshResults(verifyBox);
     const tests = parseVitestJson(
       jsonText,
       run.exitCode,
@@ -56,6 +73,7 @@ export async function independentVerify(
     return {
       tests,
       verificationSandboxId: verifyBox.name || UNAVAILABLE,
+      restoredHarness,
     };
   } finally {
     await verifyBox.stop().catch(() => undefined);
@@ -69,6 +87,8 @@ export async function runFixtureTests(
   sandbox: Sandbox,
   commandLog: CommandLog[],
 ): Promise<TestSuiteResult> {
+  await clearStaleResults(sandbox);
+
   const run = await runLogged(sandbox, {
     cmd: "npm",
     args: ["test"],
@@ -76,11 +96,7 @@ export async function runFixtureTests(
     log: commandLog,
   });
 
-  const buf = await sandbox.readFileToBuffer({
-    path: "buggy-pricing/vitest-results.json",
-  });
-  const jsonText = buf?.toString("utf8") ?? null;
-
+  const jsonText = await readFreshResults(sandbox);
   return parseVitestJson(jsonText, run.exitCode, run.stdout, run.stderr);
 }
 

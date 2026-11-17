@@ -50,10 +50,68 @@ describe("parseVitestJson", () => {
     expect(suite.tests[0]?.errorMessage).toContain("13500");
   });
 
-  it("falls back safely when JSON is missing", () => {
-    const suite = parseVitestJson(null, 1, "x", "y");
+  it("never passes when JSON is missing, even on exit 0", () => {
+    const suite = parseVitestJson(null, 0, "x", "y");
     expect(suite.passed).toBe(false);
     expect(suite.tests).toEqual([]);
+  });
+
+  it("does not let success:true override a nonzero exit code", () => {
+    const raw = JSON.stringify({
+      success: true,
+      numPassedTests: 5,
+      numFailedTests: 0,
+      numPendingTests: 0,
+      numTotalTests: 5,
+      testResults: [
+        {
+          assertionResults: [
+            {
+              title: "ok",
+              fullName: "ok",
+              status: "passed",
+              duration: 1,
+            },
+          ],
+        },
+      ],
+    });
+    expect(parseVitestJson(raw, 1, "", "").passed).toBe(false);
+  });
+
+  it("passes only with exit 0, zero failures, and parsed tests", () => {
+    const raw = JSON.stringify({
+      success: true,
+      numPassedTests: 1,
+      numFailedTests: 0,
+      numPendingTests: 0,
+      numTotalTests: 1,
+      testResults: [
+        {
+          assertionResults: [
+            {
+              title: "ok",
+              fullName: "ok",
+              status: "passed",
+              duration: 1,
+            },
+          ],
+        },
+      ],
+    });
+    expect(parseVitestJson(raw, 0, "", "").passed).toBe(true);
+  });
+});
+
+describe("write allowlist", () => {
+  it("allows only pricing.ts", async () => {
+    const { isAllowedWritePath } = await import("../src/lib/sandbox/harness");
+    expect(isAllowedWritePath("buggy-pricing/src/pricing.ts")).toBe(true);
+    expect(isAllowedWritePath("/vercel/sandbox/buggy-pricing/src/pricing.ts")).toBe(
+      true,
+    );
+    expect(isAllowedWritePath("buggy-pricing/src/pricing.test.ts")).toBe(false);
+    expect(isAllowedWritePath("buggy-pricing/package.json")).toBe(false);
   });
 });
 

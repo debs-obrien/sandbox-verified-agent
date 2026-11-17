@@ -9,7 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:fixture": "vitest run --config fixtures/buggy-pricing/vitest.config.ts"
+    "test:fixture": "npm --prefix fixtures/buggy-pricing test"
   },
   "dependencies": {
     "@ai-sdk/gateway": "^4.0.146",

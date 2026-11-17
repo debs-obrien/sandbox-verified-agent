@@ -14,6 +14,7 @@ Your job:
 5. When done, clearly state whether you fixed it (CLAIM: FIXED or CLAIM: NOT FIXED) in one short paragraph.
 
 Tools: runCommand, readFile, writeFile.
+writeFile is allowlisted to buggy-pricing/src/pricing.ts only (do not try to edit tests).
 Working directory for the fixture: /vercel/sandbox/buggy-pricing
 Prefer absolute paths under /vercel/sandbox.
 `.trim();

@@ -66,9 +66,12 @@ export function RunControls() {
         <p className="text-sm text-[var(--fail)] whitespace-pre-wrap">{error}</p>
       )}
       <p className="text-sm text-[var(--muted)] max-w-xl">
-        Live runs need Sandbox + AI Gateway credentials. Without them, the
-        receipt will record an error listing the exact missing env vars. Sample
-        receipts below work offline.
+        Live runs need Sandbox + AI Gateway credentials. Deployed demos should
+        set <code className="font-mono">RUN_SECRET</code> (or enable Vercel
+        Deployment Protection with{" "}
+        <code className="font-mono">ALLOW_PUBLIC_RUNS=true</code>) so anonymous
+        callers cannot burn paid Sandbox/Gateway usage. Sample receipts below
+        work offline.
       </p>
     </div>
   );

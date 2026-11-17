@@ -113,6 +113,20 @@ VERCEL_TEAM_ID=…
 VERCEL_PROJECT_ID=…
 ```
 
+### Protect `/api/run` on public deploys
+
+Anonymous callers must not be able to burn Sandbox + Gateway spend:
+
+```bash
+# Recommended for scripted/API access:
+RUN_SECRET=some-long-random
+
+# Or, only behind Vercel Deployment Protection:
+ALLOW_PUBLIC_RUNS=true
+```
+
+Without one of those, production returns `403`. Client-supplied `model` overrides are ignored (server uses `AI_GATEWAY_MODEL` / default). Per-instance concurrency/hourly limits apply (`RUN_MAX_CONCURRENT`, `RUN_MAX_PER_HOUR`).
+
 See `.env.example`.
 
 ### Required credentials (checklist)
@@ -176,7 +190,10 @@ Real DX friction hit while building this template:
 7. **Local auth matrix** — Sandbox wants OIDC or the token trio; Gateway wants OIDC or `AI_GATEWAY_API_KEY`. Easy to have one and not the other locally.
 8. **AI SDK stop helpers** — use `isStepCount` (AI SDK 7); older `stepCountIs` / `maxSteps` memories will fail typecheck.
 9. **Long runs on serverless** — plan `maxDuration` (and patience). Snapshot + npm install + multi-step tool loops are not “edge instant.”
-10. **Vitest JSON reporter in the sandbox** — parse defensively; if the JSON file is missing, fall back to exit code without fabricating per-test rows.
+10. **Vitest JSON reporter in the sandbox** — parse defensively; missing/empty JSON never counts as passed. Clear `vitest-results.json` before each run so stale reports cannot be reused.
+11. **Harness tampering** — an agent with shell access could edit tests. This demo allowlists `writeFile` to `src/pricing.ts` and restores pristine harness files from the host fixture before independent verification.
+12. **Vercel filesystem is read-only** — receipts go to in-memory + `/tmp` (same-instance), not `data/` on deploy. Multi-instance durability needs Blob/KV (out of scope here).
+13. **Public `/api/run` is paid compute** — gate with `RUN_SECRET` or Deployment Protection + `ALLOW_PUBLIC_RUNS`.
 
 ## Project layout
 
