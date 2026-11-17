@@ -1,19 +1,26 @@
 /**
  * Runtime configuration.
- * Model default is a live Gateway catalog id (fetched 2026-11-17):
+ * Model default is a live Gateway catalog id:
  * anthropic/claude-haiku-4.5 — cheap, tool-calling capable.
  * Override with AI_GATEWAY_MODEL.
  */
 export const DEFAULT_MODEL =
   process.env.AI_GATEWAY_MODEL ?? "anthropic/claude-haiku-4.5";
 
-export const WORKSPACE_ROOT = "/vercel/sandbox/buggy-pricing";
+/**
+ * Preferred sandbox workspace root. The universal image may not ship this
+ * directory — we mkdir -p it after create and fall back to sandbox.cwd.
+ */
+export const PREFERRED_SANDBOX_ROOT = "/vercel/sandbox";
+
+/** Fixture directory name under the sandbox root. */
+export const FIXTURE_DIRNAME = "buggy-pricing";
 
 /** Truncate command stdout/stderr in the receipt. */
 export const LOG_TRUNCATE_CHARS = 4_000;
 
-/** Max agent steps in normal mode. */
-export const NORMAL_MAX_STEPS = 12;
+/** Max agent steps in normal mode (kept modest for Hobby 300s). */
+export const NORMAL_MAX_STEPS = 8;
 
 /**
  * Caught-it mode: deliberately tiny step budget so the agent cannot
@@ -21,7 +28,18 @@ export const NORMAL_MAX_STEPS = 12;
  */
 export const CAUGHT_MAX_STEPS = 2;
 
-export const SANDBOX_TIMEOUT_MS = 10 * 60_000;
+/**
+ * Hobby plan function maxDuration is 300s. Keep the sandbox session under
+ * that so create → install → agent → snapshots → verify can finish.
+ */
+export const FUNCTION_MAX_DURATION_S = 300;
+export const SANDBOX_TIMEOUT_MS = 270_000; // 4.5 minutes
+
+/**
+ * Sandbox snapshot expiration: API accepts 0 (never) or >= 1 day.
+ * Demo receipts use 1 day.
+ */
+export const SNAPSHOT_EXPIRATION_MS = 24 * 60 * 60 * 1000;
 
 export function getSandboxCredentials():
   | { token: string; teamId: string; projectId: string }
@@ -35,31 +53,10 @@ export function getSandboxCredentials():
   return undefined;
 }
 
-export function hasAiGatewayAuth(): boolean {
-  return Boolean(
-    process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN,
-  );
+export function fixtureRoot(sandboxRoot: string): string {
+  return `${sandboxRoot.replace(/\/$/, "")}/${FIXTURE_DIRNAME}`;
 }
 
-export function missingCredentials(): string[] {
-  const missing: string[] = [];
-  if (!hasAiGatewayAuth()) {
-    missing.push(
-      "AI_GATEWAY_API_KEY (or VERCEL_OIDC_TOKEN via `vercel link` + `vercel env pull`)",
-    );
-  }
-  // Sandbox on Vercel uses OIDC automatically; locally needs OIDC or token trio.
-  if (
-    !process.env.VERCEL_OIDC_TOKEN &&
-    !(
-      process.env.VERCEL_TOKEN &&
-      process.env.VERCEL_TEAM_ID &&
-      process.env.VERCEL_PROJECT_ID
-    )
-  ) {
-    missing.push(
-      "Sandbox auth: VERCEL_OIDC_TOKEN (preferred) OR VERCEL_TOKEN + VERCEL_TEAM_ID + VERCEL_PROJECT_ID",
-    );
-  }
-  return missing;
+export function hasBlobToken(): boolean {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
 }

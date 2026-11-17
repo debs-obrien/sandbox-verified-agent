@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ToolLoopAgent, isStepCount } from "ai";
+import { resolveAuthStatus } from "../auth";
 import {
   CAUGHT_MAX_STEPS,
   DEFAULT_MODEL,
+  FIXTURE_DIRNAME,
   NORMAL_MAX_STEPS,
-  WORKSPACE_ROOT,
-  missingCredentials,
 } from "../config";
 import { unifiedDiff } from "../receipt/diff";
 import { extractLlmSteps } from "../receipt/extract-llm-steps";
@@ -25,12 +25,7 @@ import {
   takeSnapshot,
   UNAVAILABLE,
 } from "../sandbox/verify";
-import type {
-  CommandLog,
-  DemoMode,
-  FileDiff,
-  Receipt,
-} from "../types";
+import type { CommandLog, DemoMode, FileDiff, Receipt } from "../types";
 import { createSandboxTools } from "./tools";
 import {
   instructionsFor,
@@ -38,14 +33,15 @@ import {
   userPromptFor,
 } from "./prompts";
 
-const TRACKED_FILES = [
-  "buggy-pricing/src/pricing.ts",
-  "buggy-pricing/src/pricing.test.ts",
+const TRACKED_RELATIVE = [
+  `${FIXTURE_DIRNAME}/src/pricing.ts`,
+  `${FIXTURE_DIRNAME}/src/pricing.test.ts`,
 ];
 
 async function readSandboxText(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sandbox: { readFileToBuffer: (f: { path: string }) => Promise<Buffer | null> },
+  sandbox: {
+    readFileToBuffer: (f: { path: string }) => Promise<Buffer | null>;
+  },
   filePath: string,
 ): Promise<string> {
   const buf = await sandbox.readFileToBuffer({ path: filePath });
@@ -68,8 +64,9 @@ export async function runVerifiedAgent(options: {
     "utf8",
   );
 
-  const missing = missingCredentials();
-  if (missing.length > 0) {
+  // Must run inside the request handler so x-vercel-oidc-token is visible.
+  const auth = await resolveAuthStatus();
+  if (auth.missing.length > 0) {
     const receipt: Receipt = {
       id,
       createdAt,
@@ -101,7 +98,7 @@ export async function runVerifiedAgent(options: {
         verificationSandboxId: UNAVAILABLE,
       },
       verdict: "error",
-      errorMessage: `Missing credentials:\n- ${missing.join("\n- ")}`,
+      errorMessage: `Missing credentials:\n- ${auth.missing.join("\n- ")}`,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
       architectureNotes: architectureNotes(),
     };
@@ -114,34 +111,48 @@ export async function runVerifiedAgent(options: {
   let agentSandbox: Awaited<
     ReturnType<typeof createPreparedSandbox>
   >["sandbox"] | null = null;
+  let sandboxRoot = "";
+  let fixtureRoot = "";
 
   try {
     const prepared = await createPreparedSandbox(commandLog);
     agentSandbox = prepared.sandbox;
+    sandboxRoot = prepared.sandboxRoot;
+    fixtureRoot = prepared.fixtureRoot;
 
-    // Baseline snapshot BEFORE the agent works.
-    // snapshot() stops the session — we must recreate from the snapshot.
+    // Baseline snapshot BEFORE the agent works (stops this session).
     const before = await takeSnapshot(agentSandbox);
     beforeSnapshotId = before.snapshotId;
 
     // Resume work from the before-snapshot in a fresh session.
-    agentSandbox = await createSandboxFromSnapshot(before.snapshotId);
+    const resumed = await createSandboxFromSnapshot(
+      before.snapshotId,
+      commandLog,
+    );
+    agentSandbox = resumed.sandbox;
+    sandboxRoot = resumed.sandboxRoot;
+    fixtureRoot = resumed.fixtureRoot;
 
-    // Capture before-file contents for the diff.
     const beforeFiles: Record<string, string> = {};
-    for (const f of TRACKED_FILES) {
+    for (const f of TRACKED_RELATIVE) {
       beforeFiles[f] = await readSandboxText(agentSandbox, f);
     }
 
-    // Baseline failing tests (agent evidence, not verification).
-    const agentTestsBefore = await runFixtureTests(agentSandbox, commandLog);
+    const agentTestsBefore = await runFixtureTests(
+      agentSandbox,
+      fixtureRoot,
+      commandLog,
+    );
 
     const maxSteps = mode === "caught" ? CAUGHT_MAX_STEPS : NORMAL_MAX_STEPS;
-    const tools = createSandboxTools(agentSandbox, commandLog);
+    const tools = createSandboxTools(agentSandbox, commandLog, {
+      sandboxRoot,
+      fixtureRoot,
+    });
 
     const agent = new ToolLoopAgent({
       model,
-      instructions: instructionsFor(mode),
+      instructions: instructionsFor(mode, fixtureRoot),
       tools,
       stopWhen: isStepCount(maxSteps),
       toolChoice: "auto",
@@ -154,37 +165,32 @@ export async function runVerifiedAgent(options: {
     const llmSteps = extractLlmSteps(result.steps);
     const claim = parseAgentClaim(result.text ?? "");
 
-    // After-file contents + diff
     const diffs: FileDiff[] = [];
-    for (const f of TRACKED_FILES) {
-      const after = await readSandboxText(agentSandbox, f);
+    for (const f of TRACKED_RELATIVE) {
+      const afterContent = await readSandboxText(agentSandbox, f);
       const beforeContent = beforeFiles[f] ?? "";
-      if (beforeContent !== after) {
+      if (beforeContent !== afterContent) {
+        const display = f.replace(new RegExp(`^${FIXTURE_DIRNAME}/`), "");
         diffs.push({
-          path: f.replace(/^buggy-pricing\//, ""),
+          path: display,
           before: beforeContent,
-          after,
-          unifiedDiff: unifiedDiff(
-            f.replace(/^buggy-pricing\//, ""),
-            beforeContent,
-            after,
-          ),
+          after: afterContent,
+          unifiedDiff: unifiedDiff(display, beforeContent, afterContent),
         });
       }
     }
 
-    // Agent's own final test run (self-reported; not verification).
-    const agentTestsAfter = await runFixtureTests(agentSandbox, commandLog);
+    const agentTestsAfter = await runFixtureTests(
+      agentSandbox,
+      fixtureRoot,
+      commandLog,
+    );
 
-    // Snapshot AFTER the agent's work (stops this session).
     const after = await takeSnapshot(agentSandbox);
     afterSnapshotId = after.snapshotId;
-    agentSandbox = null; // already stopped by snapshot()
+    agentSandbox = null;
 
-    // Independent verification in a FRESH sandbox from the after-snapshot.
-    // Harness files are restored from the host fixture before tests run.
     const verify = await independentVerify(after.snapshotId, commandLog);
-
     const verified = verify.tests.passed === true;
     const verdict = decideVerdict({
       claimedFixed: claim.claimedFixed,
@@ -217,7 +223,12 @@ export async function runVerifiedAgent(options: {
       },
       verdict,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
-      architectureNotes: architectureNotes(mode, maxSteps, verify.restoredHarness),
+      architectureNotes: architectureNotes(
+        mode,
+        maxSteps,
+        verify.restoredHarness,
+        fixtureRoot,
+      ),
     };
 
     await saveReceipt(receipt);
@@ -261,7 +272,7 @@ export async function runVerifiedAgent(options: {
       verdict: "error",
       errorMessage: message,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
-      architectureNotes: architectureNotes(),
+      architectureNotes: architectureNotes(undefined, undefined, undefined, fixtureRoot),
     };
     await saveReceipt(receipt);
     return receipt;
@@ -272,12 +283,17 @@ function architectureNotes(
   mode?: DemoMode,
   maxSteps?: number,
   restoredHarness?: string[],
+  fixtureRoot?: string,
 ): string[] {
   return [
-    `Fixture workspace inside sandbox: ${WORKSPACE_ROOT}`,
+    fixtureRoot
+      ? `Fixture workspace inside sandbox: ${fixtureRoot}`
+      : "Fixture workspace created under the sandbox cwd (mkdir -p).",
     "LLM (AI SDK ToolLoopAgent) runs on the Next.js host via AI Gateway — not inside the sandbox.",
+    "Auth: getVercelOidcToken() (x-vercel-oidc-token header on Vercel, VERCEL_OIDC_TOKEN locally) or AI_GATEWAY_API_KEY / token trio.",
     "Sandbox tools: runCommand, readFile, writeFile (writeFile allowlisted to src/pricing.ts only).",
-    "Verification: snapshot before → agent work → snapshot after → fresh sandbox → restore pristine harness from host → clear vitest-results.json → re-run vitest.",
+    "Verification: snapshot before → agent work → snapshot after → fresh sandbox → restore pristine harness → clear vitest-results.json → re-run vitest.",
+    "Snapshot expiration: 1 day (Sandbox API rejects values between 0 and 1 day exclusive).",
     restoredHarness?.length
       ? `Restored trusted harness files before verify: ${restoredHarness.join(", ")}.`
       : "Trusted harness restore runs before independent verify.",

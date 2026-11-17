@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@ai-sdk/gateway": "^4.0.146",
+    "@vercel/blob": "^2.9.0",
+    "@vercel/oidc": "^4.0.9",
     "@vercel/sandbox": "^4.0.0",
     "ai": "^7.0.173",
     "next": "16.4.6",

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Sandbox } from "@vercel/sandbox";
+import { FIXTURE_DIRNAME } from "../config";
 
 /**
  * Trusted harness paths restored before independent verification.
@@ -17,23 +18,34 @@ export const TRUSTED_HARNESS_FILES = [
 
 /** Only this implementation file may be written by the agent. */
 export const ALLOWED_WRITE_PATHS = new Set([
-  "buggy-pricing/src/pricing.ts",
+  `${FIXTURE_DIRNAME}/src/pricing.ts`,
   "src/pricing.ts",
 ]);
 
-export function normalizeSandboxPath(p: string): string {
-  const prefix = "/vercel/sandbox/";
+export function normalizeSandboxPath(p: string, sandboxRoot?: string): string {
   let relative = p;
-  if (relative.startsWith(prefix)) relative = relative.slice(prefix.length);
-  else if (relative.startsWith("/vercel/sandbox")) {
-    relative = relative.slice("/vercel/sandbox".length).replace(/^\//, "");
+  const roots = [
+    sandboxRoot,
+    "/vercel/sandbox",
+  ].filter(Boolean) as string[];
+
+  for (const root of roots) {
+    const prefix = root.replace(/\/$/, "");
+    if (relative.startsWith(prefix + "/")) {
+      relative = relative.slice(prefix.length + 1);
+      break;
+    }
+    if (relative.startsWith(prefix)) {
+      relative = relative.slice(prefix.length).replace(/^\//, "");
+      break;
+    }
   }
-  relative = relative.replace(/^\.\//, "");
-  return relative.replaceAll("\\", "/");
+
+  return relative.replace(/^\.\//, "").replaceAll("\\", "/");
 }
 
-export function isAllowedWritePath(p: string): boolean {
-  const relative = normalizeSandboxPath(p);
+export function isAllowedWritePath(p: string, sandboxRoot?: string): boolean {
+  const relative = normalizeSandboxPath(p, sandboxRoot);
   return ALLOWED_WRITE_PATHS.has(relative);
 }
 
@@ -48,7 +60,7 @@ export async function restoreTrustedHarness(sandbox: Sandbox): Promise<string[]>
 
   for (const rel of TRUSTED_HARNESS_FILES) {
     const content = await readFile(path.join(localFixture, rel));
-    files.push({ path: `buggy-pricing/${rel}`, content });
+    files.push({ path: `${FIXTURE_DIRNAME}/${rel}`, content });
     restored.push(rel);
   }
 

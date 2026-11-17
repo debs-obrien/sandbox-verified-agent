@@ -1,5 +1,5 @@
 import type { Sandbox } from "@vercel/sandbox";
-import { WORKSPACE_ROOT } from "../config";
+import { FIXTURE_DIRNAME, SNAPSHOT_EXPIRATION_MS } from "../config";
 import { parseVitestJson } from "../receipt/parse-vitest";
 import type { CommandLog, TestSuiteResult, Unavailable } from "../types";
 import { runLogged } from "./commands";
@@ -7,39 +7,36 @@ import { restoreTrustedHarness } from "./harness";
 import { createSandboxFromSnapshot } from "./setup";
 
 const UNAVAILABLE: Unavailable = "unavailable";
-const RESULTS_PATH = "buggy-pricing/vitest-results.json";
+const RESULTS_REL = `${FIXTURE_DIRNAME}/vitest-results.json`;
 
 /**
  * Snapshot the current sandbox filesystem. Note: snapshot() stops the session.
+ * Expiration must be 0 (never) or >= 1 day.
  */
 export async function takeSnapshot(
   sandbox: Sandbox,
 ): Promise<{ snapshotId: string }> {
   const snap = await sandbox.snapshot({
-    expiration: 60 * 60_000,
+    expiration: SNAPSHOT_EXPIRATION_MS,
   });
   return { snapshotId: snap.snapshotId };
 }
 
 async function clearStaleResults(sandbox: Sandbox): Promise<void> {
-  // Empty / missing report forces a fresh parse; never reuse a prior JSON file.
   await sandbox.writeFiles([
-    { path: RESULTS_PATH, content: Buffer.from("", "utf8") },
+    { path: RESULTS_REL, content: Buffer.from("", "utf8") },
   ]);
 }
 
-async function readFreshResults(
-  sandbox: Sandbox,
-): Promise<string | null> {
-  const buf = await sandbox.readFileToBuffer({ path: RESULTS_PATH });
+async function readFreshResults(sandbox: Sandbox): Promise<string | null> {
+  const buf = await sandbox.readFileToBuffer({ path: RESULTS_REL });
   const text = buf?.toString("utf8")?.trim() ?? "";
   return text.length > 0 ? text : null;
 }
 
 /**
- * Restore the after-snapshot into a FRESH sandbox, reinstall trust in the
- * test harness from the host fixture, then re-run Vitest. Agent edits to
- * tests/config/lockfile cannot survive into the verification evidence.
+ * Restore the after-snapshot into a FRESH sandbox, restore the trusted
+ * harness from the host fixture, then re-run Vitest.
  */
 export async function independentVerify(
   afterSnapshotId: string,
@@ -49,7 +46,10 @@ export async function independentVerify(
   verificationSandboxId: string;
   restoredHarness: string[];
 }> {
-  const verifyBox = await createSandboxFromSnapshot(afterSnapshotId);
+  const { sandbox: verifyBox, fixtureRoot } = await createSandboxFromSnapshot(
+    afterSnapshotId,
+    commandLog,
+  );
 
   try {
     const restoredHarness = await restoreTrustedHarness(verifyBox);
@@ -58,7 +58,7 @@ export async function independentVerify(
     const run = await runLogged(verifyBox, {
       cmd: "npm",
       args: ["test"],
-      cwd: WORKSPACE_ROOT,
+      cwd: fixtureRoot,
       log: commandLog,
     });
 
@@ -85,6 +85,7 @@ export async function independentVerify(
  */
 export async function runFixtureTests(
   sandbox: Sandbox,
+  fixtureRoot: string,
   commandLog: CommandLog[],
 ): Promise<TestSuiteResult> {
   await clearStaleResults(sandbox);
@@ -92,7 +93,7 @@ export async function runFixtureTests(
   const run = await runLogged(sandbox, {
     cmd: "npm",
     args: ["test"],
-    cwd: WORKSPACE_ROOT,
+    cwd: fixtureRoot,
     log: commandLog,
   });
 

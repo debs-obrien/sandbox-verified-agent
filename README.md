@@ -6,7 +6,7 @@ A Vercel DevRel demo template: an AI SDK coding agent edits a real failing Vites
 
 A green chat message is not evidence. The receipt is.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdebs-obrien%2Fsandbox-verified-agent&env=AI_GATEWAY_API_KEY&envDescription=AI%20Gateway%20API%20key%20(or%20use%20OIDC%20on%20Vercel)%20plus%20Sandbox%20access%20via%20project%20link&project-name=sandbox-verified-agent&repository-name=sandbox-verified-agent)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdebs-obrien%2Fsandbox-verified-agent&env=AI_GATEWAY_API_KEY,ALLOW_PUBLIC_RUNS&envDescription=Enable%20OIDC%20on%20the%20project%2C%20connect%20a%20Blob%20store%20(BLOB_READ_WRITE_TOKEN)%2C%20and%20optionally%20set%20AI_GATEWAY_API_KEY.%20Set%20ALLOW_PUBLIC_RUNS%3Dtrue%20only%20behind%20Deployment%20Protection.&project-name=sandbox-verified-agent&repository-name=sandbox-verified-agent)
 
 ## Who has this problem?
 
@@ -72,7 +72,7 @@ Unit tests only — no Playwright.
 
 | Mode | What happens | Receipt verdict |
 | --- | --- | --- |
-| **normal** | Full prompt + `isStepCount(12)`. Agent should fix `>` → `>=` and pass tests. | `verified` when claim + independent re-run agree |
+| **normal** | Full prompt + `isStepCount(8)`. Agent should fix `>` → `>=` and pass tests. | `verified` when claim + independent re-run agree |
 | **caught-it** | Weaker prompt that tells the agent to stop early and emit `CLAIM: FIXED` without a correct fix, plus `isStepCount(2)`. | `claim-failed-verification` (“Agent claimed fixed — verification failed”) |
 
 Caught-it is intentional theater for demos: the mechanism is an honest step-limit + prompt, not a hidden mock of the verifier.
@@ -92,12 +92,15 @@ npx vercel link
 npx vercel env pull .env.local
 ```
 
-### 3. AI Gateway auth
+### 3. AI Gateway + Sandbox auth (OIDC)
+
+On **Vercel Functions**, the OIDC token arrives as the `x-vercel-oidc-token` **request header**, not as `VERCEL_OIDC_TOKEN`. This app (and `@vercel/sandbox` / AI Gateway) uses `getVercelOidcToken()` from `@vercel/oidc`, which reads that header on deploy and falls back to `VERCEL_OIDC_TOKEN` locally after `vercel env pull`.
 
 Pick one:
 
-- **On Vercel / linked local:** `VERCEL_OIDC_TOKEN` from `vercel env pull` (also works for Sandbox).
-- **API key:** create a Gateway key and set `AI_GATEWAY_API_KEY` in `.env.local`.
+- **On Vercel:** enable OIDC on the project (no env var required for the header path).
+- **Linked local:** `VERCEL_OIDC_TOKEN` from `vercel env pull`.
+- **API key:** set `AI_GATEWAY_API_KEY` for Gateway (Sandbox still needs OIDC or the token trio).
 
 Optional:
 
@@ -111,6 +114,16 @@ External CI without OIDC also needs:
 VERCEL_TOKEN=…
 VERCEL_TEAM_ID=…
 VERCEL_PROJECT_ID=…
+```
+
+### 4. Connect a Vercel Blob store (required on deploy)
+
+Receipts must survive across function instances. Connect a **Blob** store to the project so `BLOB_READ_WRITE_TOKEN` is available, then redeploy. Locally, when the token is unset, receipts fall back to `./data/receipts`.
+
+```bash
+# After connecting Blob in the Vercel dashboard / marketplace:
+# BLOB_READ_WRITE_TOKEN is injected automatically on Vercel.
+# For local: vercel env pull .env.local
 ```
 
 ### Protect `/api/run` on public deploys
@@ -131,10 +144,11 @@ See `.env.example`.
 
 ### Required credentials (checklist)
 
-| Variable | Used for |
+| Variable / mechanism | Used for |
 | --- | --- |
-| `AI_GATEWAY_API_KEY` **or** `VERCEL_OIDC_TOKEN` | Model calls via AI Gateway |
-| `VERCEL_OIDC_TOKEN` **or** (`VERCEL_TOKEN` + `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID`) | `@vercel/sandbox` create / snapshot / commands |
+| `getVercelOidcToken()` (`x-vercel-oidc-token` on Vercel) **or** `AI_GATEWAY_API_KEY` / `VERCEL_OIDC_TOKEN` | Model calls via AI Gateway |
+| `getVercelOidcToken()` **or** (`VERCEL_TOKEN` + `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID`) | `@vercel/sandbox` create / snapshot / commands |
+| `BLOB_READ_WRITE_TOKEN` (Blob store connected) | Durable receipt storage across instances |
 
 ## Run locally
 
@@ -163,9 +177,9 @@ Use the Deploy button above, or:
 npx vercel --prod
 ```
 
-On Vercel, OIDC covers Sandbox + Gateway for the deployment. Still set `AI_GATEWAY_API_KEY` if you prefer a key over OIDC for Gateway. Ensure the project has Sandbox enabled for the team.
+On Vercel, OIDC covers Sandbox + Gateway via `getVercelOidcToken()` (request header). Still set `AI_GATEWAY_API_KEY` if you prefer a key for Gateway. Connect a **Blob** store. Ensure Sandbox is enabled for the team.
 
-Function duration: `/api/run` sets `maxDuration = 800` (Sandbox + agent + verify is slow).
+Function duration: `/api/run` sets `maxDuration = 300` (Hobby cap). Sandbox session timeout is 270s so the run can finish inside the function.
 
 ## Receipt fields
 
@@ -187,13 +201,15 @@ Real DX friction hit while building this template:
 4. **`runCommand` has no shell** — pipes/`&&` need `bash -c`. Non-zero exits do **not** throw; always check `exitCode`.
 5. **File methods vs cwd** — `writeFiles` / `readFileToBuffer` are rooted at `/vercel/sandbox`, but command cwd defaults may differ. Prefer absolute paths under `/vercel/sandbox`.
 6. **Network policy shape** — allow-lists are domain → rule objects (with optional `transform` for credential brokering). Install needs registry hosts; agent phase in this demo is `deny-all` because the model stays on the host.
-7. **Local auth matrix** — Sandbox wants OIDC or the token trio; Gateway wants OIDC or `AI_GATEWAY_API_KEY`. Easy to have one and not the other locally.
-8. **AI SDK stop helpers** — use `isStepCount` (AI SDK 7); older `stepCountIs` / `maxSteps` memories will fail typecheck.
-9. **Long runs on serverless** — plan `maxDuration` (and patience). Snapshot + npm install + multi-step tool loops are not “edge instant.”
-10. **Vitest JSON reporter in the sandbox** — parse defensively; missing/empty JSON never counts as passed. Clear `vitest-results.json` before each run so stale reports cannot be reused.
-11. **Harness tampering** — an agent with shell access could edit tests. This demo allowlists `writeFile` to `src/pricing.ts` and restores pristine harness files from the host fixture before independent verification.
-12. **Vercel filesystem is read-only** — receipts go to in-memory + `/tmp` (same-instance), not `data/` on deploy. Multi-instance durability needs Blob/KV (out of scope here).
-13. **Public `/api/run` is paid compute** — gate with `RUN_SECRET` or Deployment Protection + `ALLOW_PUBLIC_RUNS`.
+7. **OIDC is a request header on Functions** — `VERCEL_OIDC_TOKEN` env is for local `vercel env pull`. On deploy, use `getVercelOidcToken()` / SDK built-ins that read `x-vercel-oidc-token`. A naive `process.env.VERCEL_OIDC_TOKEN` check will false-negative.
+8. **Hobby `maxDuration` is 300s** — asking for 800 fails or is clamped; keep sandbox timeout under the function budget.
+9. **Snapshot expiration** — Sandbox accepts `0` (never) or `>= 1 day`. Values like 1 hour are rejected.
+10. **Workspace root** — do not assume `/vercel/sandbox` exists; `mkdir -p` (or use `sandbox.cwd`) and keep command paths consistent.
+11. **Receipts across instances** — `/tmp` and in-memory are same-instance only. Use Vercel Blob (or similar) for `/receipt/[id]` after redirect.
+12. **AI SDK stop helpers** — use `isStepCount` (AI SDK 7); older `stepCountIs` / `maxSteps` memories will fail typecheck.
+13. **Vitest JSON reporter** — missing/empty JSON never counts as passed; clear before each run.
+14. **Harness tampering** — allowlist `writeFile` to `src/pricing.ts` and restore pristine harness files before independent verification.
+15. **Public `/api/run` is paid compute** — gate with `RUN_SECRET` or Deployment Protection + `ALLOW_PUBLIC_RUNS`.
 
 ## Project layout
 

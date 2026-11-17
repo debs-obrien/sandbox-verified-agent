@@ -2,13 +2,15 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { Sandbox } from "@vercel/sandbox";
 import {
+  FIXTURE_DIRNAME,
   getSandboxCredentials,
   SANDBOX_TIMEOUT_MS,
-  WORKSPACE_ROOT,
+  SNAPSHOT_EXPIRATION_MS,
 } from "../config";
 import type { CommandLog } from "../types";
 import { runLogged } from "./commands";
 import { DENY_ALL_POLICY, NPM_INSTALL_POLICY } from "./network";
+import { ensureSandboxWorkspace } from "./paths";
 
 async function collectFiles(
   dir: string,
@@ -41,6 +43,12 @@ function createOpts() {
     timeout: SANDBOX_TIMEOUT_MS,
     persistent: false as const,
     resources: { vcpus: 2 },
+    // Snapshot TTL must be 0 (never) or >= 1 day per Sandbox API.
+    snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+    keepLastSnapshots: {
+      count: 3,
+      expiration: SNAPSHOT_EXPIRATION_MS,
+    },
     ...(creds
       ? { token: creds.token, teamId: creds.teamId, projectId: creds.projectId }
       : {}),
@@ -48,11 +56,12 @@ function createOpts() {
 }
 
 /**
- * Create a sandbox, copy the buggy-pricing fixture in, npm install with a
- * registry allow-list, then lock the network to deny-all for agent work.
+ * Create a sandbox, ensure the workspace root exists, copy the fixture in,
+ * npm install with a registry allow-list, then lock the network to deny-all.
  */
 export async function createPreparedSandbox(commandLog: CommandLog[]): Promise<{
   sandbox: Sandbox;
+  sandboxRoot: string;
   fixtureRoot: string;
 }> {
   const localFixture = path.join(process.cwd(), "fixtures", "buggy-pricing");
@@ -64,16 +73,18 @@ export async function createPreparedSandbox(commandLog: CommandLog[]): Promise<{
   const sandbox = await Sandbox.create({
     ...createOpts(),
     networkPolicy: NPM_INSTALL_POLICY,
-    keepLastSnapshots: { count: 3, expiration: 60 * 60_000 },
   });
 
-  await sandbox.mkDir("buggy-pricing");
+  const { sandboxRoot, fixtureRoot } = await ensureSandboxWorkspace(
+    sandbox,
+    commandLog,
+  );
 
   const files = await collectFiles(localFixture);
-  // writeFiles paths are relative to /vercel/sandbox
+  // writeFiles paths are relative to the sandbox filesystem root.
   await sandbox.writeFiles(
     files.map((f) => ({
-      path: `buggy-pricing/${f.relative}`,
+      path: `${FIXTURE_DIRNAME}/${f.relative}`,
       content: f.content,
     })),
   );
@@ -81,7 +92,7 @@ export async function createPreparedSandbox(commandLog: CommandLog[]): Promise<{
   const install = await runLogged(sandbox, {
     cmd: "npm",
     args: ["install"],
-    cwd: WORKSPACE_ROOT,
+    cwd: fixtureRoot,
     log: commandLog,
   });
   if (install.exitCode !== 0) {
@@ -93,18 +104,22 @@ export async function createPreparedSandbox(commandLog: CommandLog[]): Promise<{
   // Lock down egress for the agent phase — model calls stay on the host.
   await sandbox.update({ networkPolicy: DENY_ALL_POLICY });
 
-  return { sandbox, fixtureRoot: WORKSPACE_ROOT };
+  return { sandbox, sandboxRoot, fixtureRoot };
 }
 
 export async function createSandboxFromSnapshot(
   snapshotId: string,
-): Promise<Sandbox> {
-  return Sandbox.create({
+  commandLog?: CommandLog[],
+): Promise<{ sandbox: Sandbox; sandboxRoot: string; fixtureRoot: string }> {
+  const sandbox = await Sandbox.create({
     ...createOpts(),
     networkPolicy: DENY_ALL_POLICY,
     source: { type: "snapshot", snapshotId },
     persistent: false,
   });
+
+  const paths = await ensureSandboxWorkspace(sandbox, commandLog);
+  return { sandbox, ...paths };
 }
 
 export { createOpts };

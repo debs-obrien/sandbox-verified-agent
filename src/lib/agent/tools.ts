@@ -1,25 +1,26 @@
 import { tool } from "ai";
 import type { Sandbox } from "@vercel/sandbox";
 import { z } from "zod";
+import { FIXTURE_DIRNAME } from "../config";
 import type { CommandLog } from "../types";
 import { runLogged } from "../sandbox/commands";
 import { isAllowedWritePath, normalizeSandboxPath } from "../sandbox/harness";
 
 /**
  * Agent tools that operate on a Vercel Sandbox from the host process.
- * The LLM never runs inside the sandbox — only its file/command effects do.
- *
  * writeFile is restricted to the implementation file; independent verification
  * also restores a pristine test harness from the host fixture.
  */
 export function createSandboxTools(
   sandbox: Sandbox,
   commandLog: CommandLog[],
+  opts: { sandboxRoot: string; fixtureRoot: string },
 ) {
+  const { sandboxRoot, fixtureRoot } = opts;
+
   return {
     runCommand: tool({
-      description:
-        "Run a command inside the sandbox (no shell unless you invoke bash -c). Check exit codes yourself. Prefer `npm test` in /vercel/sandbox/buggy-pricing.",
+      description: `Run a command inside the sandbox (no shell unless you invoke bash -c). Prefer npm test with cwd ${fixtureRoot}.`,
       inputSchema: z.object({
         cmd: z.string().describe("Binary to run, e.g. npm or bash"),
         args: z
@@ -29,13 +30,13 @@ export function createSandboxTools(
         cwd: z
           .string()
           .optional()
-          .describe("Working directory, prefer /vercel/sandbox/buggy-pricing"),
+          .describe(`Working directory, prefer ${fixtureRoot}`),
       }),
       execute: async ({ cmd, args, cwd }) => {
         const result = await runLogged(sandbox, {
           cmd,
           args: args ?? [],
-          cwd,
+          cwd: cwd ?? fixtureRoot,
           log: commandLog,
         });
         return {
@@ -52,11 +53,11 @@ export function createSandboxTools(
         path: z
           .string()
           .describe(
-            "Path relative to /vercel/sandbox or absolute under /vercel/sandbox",
+            `Path relative to ${sandboxRoot} or absolute under that root`,
           ),
       }),
       execute: async ({ path: filePath }) => {
-        const relative = normalizeSandboxPath(filePath);
+        const relative = normalizeSandboxPath(filePath, sandboxRoot);
         const buf = await sandbox.readFileToBuffer({ path: relative });
         if (!buf) {
           return { ok: false as const, error: `File not found: ${relative}` };
@@ -71,23 +72,22 @@ export function createSandboxTools(
     }),
 
     writeFile: tool({
-      description:
-        "Write the pricing implementation file only (buggy-pricing/src/pricing.ts). Other paths are rejected so the agent cannot rewrite the test harness.",
+      description: `Write the pricing implementation file only (${FIXTURE_DIRNAME}/src/pricing.ts). Other paths are rejected.`,
       inputSchema: z.object({
         path: z
           .string()
-          .describe("Must resolve to buggy-pricing/src/pricing.ts"),
+          .describe(`Must resolve to ${FIXTURE_DIRNAME}/src/pricing.ts`),
         content: z.string().describe("Full file contents to write"),
       }),
       execute: async ({ path: filePath, content }) => {
-        const relative = normalizeSandboxPath(filePath);
-        if (!isAllowedWritePath(relative)) {
+        const relative = normalizeSandboxPath(filePath, sandboxRoot);
+        if (!isAllowedWritePath(relative, sandboxRoot)) {
           return {
             ok: false as const,
-            error: `writeFile denied for ${relative}. Only buggy-pricing/src/pricing.ts is writable.`,
+            error: `writeFile denied for ${relative}. Only ${FIXTURE_DIRNAME}/src/pricing.ts is writable.`,
           };
         }
-        const target = "buggy-pricing/src/pricing.ts";
+        const target = `${FIXTURE_DIRNAME}/src/pricing.ts`;
         await sandbox.writeFiles([
           { path: target, content: Buffer.from(content, "utf8") },
         ]);

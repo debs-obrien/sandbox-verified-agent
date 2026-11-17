@@ -9,9 +9,11 @@ import {
 import type { DemoMode } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
+/** Hobby plan caps at 300s — keep SANDBOX_TIMEOUT_MS under this. */
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
+  // OIDC header (x-vercel-oidc-token) is only available inside this request.
   const denied = assertRunAuthorized(request);
   if (denied) {
     return NextResponse.json({ error: denied.error }, { status: denied.status });
@@ -25,7 +27,6 @@ export async function POST(request: Request) {
   }
 
   const mode: DemoMode = body.mode === "caught" ? "caught" : "normal";
-  // Ignore client-supplied model — prevents upgrading to an expensive model.
   const model = resolveRunModel(body.model);
 
   beginRunSlot();
