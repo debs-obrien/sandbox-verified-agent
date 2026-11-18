@@ -5,7 +5,7 @@ import { parseVitestJson } from "../src/lib/receipt/parse-vitest";
 import { decideVerdict, sumLlmTotals } from "../src/lib/receipt/totals";
 import { parseAgentClaim } from "../src/lib/agent/prompts";
 import sampleVerified from "../samples/sample-verified.json";
-import sampleCaught from "../samples/sample-caught.json";
+import sampleHidden from "../samples/sample-hidden.json";
 import type { LlmStepLog, Receipt } from "../src/lib/types";
 
 describe("parseVitestJson", () => {
@@ -110,7 +110,12 @@ describe("write allowlist", () => {
     expect(isAllowedWritePath("/vercel/sandbox/buggy-pricing/src/pricing.ts")).toBe(
       true,
     );
-    expect(isAllowedWritePath("buggy-pricing/src/pricing.test.ts")).toBe(false);
+    expect(isAllowedWritePath("buggy-pricing/src/pricing.visible.test.ts")).toBe(
+      false,
+    );
+    expect(isAllowedWritePath("buggy-pricing/src/pricing.hidden.test.ts")).toBe(
+      false,
+    );
     expect(isAllowedWritePath("buggy-pricing/package.json")).toBe(false);
   });
 });
@@ -226,11 +231,25 @@ describe("sample receipts", () => {
     expect(r.verification.verified).toBe(true);
   });
 
-  it("sample-caught flags claim-failed-verification", () => {
-    const r = sampleCaught as Receipt;
+  it("sample-hidden flags claim-failed-verification with held-out failures", () => {
+    const r = sampleHidden as Receipt;
     expect(r.isSample).toBe(true);
+    expect(r.mode).toBe("hidden");
     expect(r.verdict).toBe("claim-failed-verification");
     expect(r.agentClaim.claimedFixed).toBe(true);
     expect(r.verification.verified).toBe(false);
+    expect(r.verification.method).toBe("pristine-plus-diff");
+    expect(r.verification.hiddenTests.some((t) => t.status === "failed")).toBe(
+      true,
+    );
+    expect(r.hiddenTestSource).toContain("applyBulkDiscount (hidden)");
+  });
+});
+
+describe("hidden harness naming", () => {
+  it("trusted harness lists visible + hidden test files", async () => {
+    const { TRUSTED_HARNESS_FILES } = await import("../src/lib/sandbox/harness");
+    expect(TRUSTED_HARNESS_FILES).toContain("src/pricing.visible.test.ts");
+    expect(TRUSTED_HARNESS_FILES).toContain("src/pricing.hidden.test.ts");
   });
 });

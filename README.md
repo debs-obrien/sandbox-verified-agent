@@ -2,7 +2,7 @@
 
 **Agents that show their work.**
 
-A Vercel DevRel demo template: an AI SDK coding agent edits a real failing Vitest suite inside [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox), then a **fresh** sandbox restored from a snapshot re-runs the tests. The result is a **receipt** — bug report, agent claim, commands, diff, independent pass/fail, and AI Gateway model/provider/tokens/cost per step.
+A Vercel DevRel demo template: an AI SDK coding agent edits a real failing Vitest suite inside [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox), then a **fresh** sandbox the agent never touched re-runs the full suite (including held-out tests) against the agent’s diff. The result is a **receipt** — claim vs proof, commands, diff, visible/hidden pass/fail, and AI Gateway model/provider/tokens/cost per step.
 
 A green chat message is not evidence. The receipt is.
 
@@ -20,11 +20,11 @@ Chat UIs collapse the answer into a confident sentence. This template separates 
 
 | Piece | Role |
 | --- | --- |
-| **Vercel Sandbox** | Firecracker microVM for untrusted agent edits + test runs. Snapshots capture before/after filesystem state; restore into a new VM for a clean re-run. Network policies lock egress (npm during install, then deny-all). |
+| **Vercel Sandbox** | Firecracker microVM for untrusted agent edits + test runs. Network policies lock egress (npm during install, then deny-all). |
 | **AI Gateway** | One model string (`provider/model`), OIDC or API key auth, and real `providerMetadata.gateway` fields for provider routing, `generationId`, and `cost` — recorded on the receipt without inventing values. |
 | **AI SDK `ToolLoopAgent`** | Tool-calling agent loop (`runCommand`, `readFile`, `writeFile`) with `stopWhen: isStepCount(N)`. |
 
-**Credential choice in this demo:** the LLM runs on the **Next.js host** via AI Gateway. The sandbox never receives `AI_GATEWAY_API_KEY` / OIDC. While the agent works, sandbox egress is **deny-all**. (Docs also support Gateway-only allow-lists with firewall header transforms if you ever move model calls into the VM — see `src/lib/sandbox/network.ts`.)
+**Credential choice in this demo:** the LLM runs on the **Next.js host** via AI Gateway. The sandbox never receives `AI_GATEWAY_API_KEY` / OIDC. While the agent works, sandbox egress is **deny-all**.
 
 ## Architecture
 
@@ -39,43 +39,83 @@ flowchart LR
     UI --> Receipt
   end
 
-  subgraph SBX["Vercel Sandbox"]
-    Fix[fixtures/buggy-pricing]
-    SnapBefore[Snapshot before]
-    SnapAfter[Snapshot after]
-    Fix --> SnapBefore
+  subgraph AgentSBX["Agent sandbox"]
+    Fix[fixture copy]
+    Visible[visible tests only in hidden mode]
     Agent -->|runCommand / readFile / writeFile| Fix
-    Fix --> SnapAfter
   end
 
-  subgraph Verify["Fresh sandbox"]
-    Restore[Restore after-snapshot]
-    Tests[vitest re-run]
-    Restore --> Tests
-    Tests --> Receipt
+  subgraph Verify["Fresh sandbox — agent never touched"]
+    Pristine[Original fixture + hidden tests]
+    Diff[Agent pricing.ts only]
+    Tests[vitest full suite]
+    Pristine --> Diff --> Tests --> Receipt
   end
-
-  SnapAfter --> Restore
 ```
 
 ## The fixture
 
-`fixtures/buggy-pricing/` is a boring TypeScript pricing helper with an off-by-one:
+`fixtures/buggy-pricing/` has **two** intentional bugs:
 
-- Promo: **buy 3, get 10% off**
-- Bug: threshold uses `>` instead of `>=` (quantity `3` never discounts)
-- Vitest suite: one failing test matching the customer report in `BUG_REPORT.md`
+1. **Threshold:** `>` instead of `>=` — quantity `3` never discounts (customer report).
+2. **Rounding:** `Math.floor` instead of `Math.round` — fractional discount cents truncate.
+
+| Suite | File | Role |
+| --- | --- | --- |
+| Visible | `src/pricing.visible.test.ts` | Customer-shaped cases (exact-cent prices). A natural `>=` fix turns these green. |
+| Hidden | `src/pricing.hidden.test.ts` | Rounding, boundaries, multi-line cart. Held out from the agent in **hidden** mode. |
 
 Unit tests only — no Playwright.
 
 ## Two modes
 
-| Mode | What happens | Receipt verdict |
-| --- | --- | --- |
-| **normal** | Full prompt + `isStepCount(8)`. Agent should fix `>` → `>=` and pass tests. | `verified` when claim + independent re-run agree |
-| **caught-it** | Weaker prompt that tells the agent to stop early and emit `CLAIM: FIXED` without a correct fix, plus `isStepCount(2)`. | `claim-failed-verification` (“Agent claimed fixed — verification failed”) |
+| Mode | What the agent sees | What verification runs | Typical verdict |
+| --- | --- | --- | --- |
+| **normal** | Visible + hidden tests | Pristine fixture + agent `pricing.ts` + full suite | `verified` when the real fix lands |
+| **hidden** | Visible tests only | Same independent check **including** held-out tests | Agent honestly claims `CLAIM: FIXED` after visible green; hidden tests → `claim-failed-verification` |
 
-Caught-it is intentional theater for demos: the mechanism is an honest step-limit + prompt, not a hidden mock of the verifier.
+The agent is **not** prompted to fail. Same honest instructions in both modes. Hidden mode only changes which test files are copied into the agent sandbox.
+
+## Demo script (talk track)
+
+1. **Normal run (green)** — click **Run normal** or `POST /api/run` with `{"mode":"normal"}`. Agent sees the full suite, fixes threshold + rounding, independent verify passes → receipt badge **Verified**.
+2. **Hidden-tests run (red)** — click **Run hidden-tests demo** or `POST /api/run` with `{"mode":"hidden"}`. Agent only sees visible tests, applies the natural `>=` fix, claims fixed. Fresh sandbox re-runs with held-out tests → badge **Caught: claim not supported**.
+3. **Open the receipt** — `/receipt/<id>` (UI) and `/api/receipt/<id>` (JSON). Side-by-side: what the agent said vs what the sandbox proved; after verification, held-out source is revealed.
+
+Sample receipts (offline): `/receipt/sample-verified`, `/receipt/sample-hidden`.
+
+### Trigger via API
+
+```bash
+# Normal — expect verified when credentials are configured
+curl -X POST "$HOST/api/run" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RUN_SECRET" \
+  -d '{"mode":"normal"}'
+
+# Hidden-tests — expect claim-failed-verification
+curl -X POST "$HOST/api/run" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RUN_SECRET" \
+  -d '{"mode":"hidden"}'
+```
+
+Default model: `anthropic/claude-haiku-4.5` (override with `AI_GATEWAY_MODEL` only — client `model` is ignored).
+
+## Public receipt access (for video)
+
+`/api/run` stays gated (`RUN_SECRET` or Deployment Protection + `ALLOW_PUBLIC_RUNS`). Receipts are read-only, but **Vercel Deployment Protection** sits in front of the whole deployment — the app cannot punch a path-level hole by itself.
+
+**Chosen approach (do this in the Vercel dashboard — do not silently disable project protection):**
+
+1. Prefer a **Shareable Link** for the preview/production deployment you will film:
+   - Project → Deployments → open the deployment → **Share** → **Anyone with the link**.
+   - Use that share URL in the video. Viewers can open `/receipt/<id>` and `/api/receipt/<id>` without signing in to Vercel.
+   - Docs: [Shareable Links](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/sharable-links)
+2. Optional for scripted grabs: enable **Protection Bypass for Automation** and append `?x-vercel-protection-bypass=<secret>` (or the `x-vercel-protection-bypass` header) when fetching receipt URLs.
+3. If production should be fully public while previews stay protected: Project → Deployment Protection → protect **Only Preview Deployments**.
+
+Do **not** turn off Deployment Protection for the whole project just for the demo unless you accept anonymous `/api/run` spend (still require `RUN_SECRET` either way).
 
 ## Setup
 
@@ -94,7 +134,7 @@ npx vercel env pull .env.local
 
 ### 3. AI Gateway + Sandbox auth (OIDC)
 
-On **Vercel Functions**, the OIDC token arrives as the `x-vercel-oidc-token` **request header**, not as `VERCEL_OIDC_TOKEN`. This app (and `@vercel/sandbox` / AI Gateway) uses `getVercelOidcToken()` from `@vercel/oidc`, which reads that header on deploy and falls back to `VERCEL_OIDC_TOKEN` locally after `vercel env pull`.
+On **Vercel Functions**, the OIDC token arrives as the `x-vercel-oidc-token` **request header**, not as `VERCEL_OIDC_TOKEN`. This app uses `getVercelOidcToken()` from `@vercel/oidc`.
 
 Pick one:
 
@@ -118,17 +158,9 @@ VERCEL_PROJECT_ID=…
 
 ### 4. Connect a Vercel Blob store (required on deploy)
 
-Receipts must survive across function instances. Connect a **Blob** store to the project so `BLOB_READ_WRITE_TOKEN` is available, then redeploy. Locally, when the token is unset, receipts fall back to `./data/receipts`.
-
-```bash
-# After connecting Blob in the Vercel dashboard / marketplace:
-# BLOB_READ_WRITE_TOKEN is injected automatically on Vercel.
-# For local: vercel env pull .env.local
-```
+Receipts must survive across function instances. Connect a **Blob** store so `BLOB_READ_WRITE_TOKEN` is available, then redeploy. Locally, when the token is unset, receipts fall back to `./data/receipts`.
 
 ### Protect `/api/run` on public deploys
-
-Anonymous callers must not be able to burn Sandbox + Gateway spend:
 
 ```bash
 # Recommended for scripted/API access:
@@ -138,7 +170,7 @@ RUN_SECRET=some-long-random
 ALLOW_PUBLIC_RUNS=true
 ```
 
-Without one of those, production returns `403`. Client-supplied `model` overrides are ignored (server uses `AI_GATEWAY_MODEL` / default). Per-instance concurrency/hourly limits apply (`RUN_MAX_CONCURRENT`, `RUN_MAX_PER_HOUR`).
+Without one of those, production returns `403`. Client-supplied `model` overrides are ignored. Per-instance concurrency/hourly limits apply (`RUN_MAX_CONCURRENT`, `RUN_MAX_PER_HOUR`).
 
 See `.env.example`.
 
@@ -156,67 +188,54 @@ See `.env.example`.
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000):
-
-- **Run normal** → live agent + verification receipt
-- **Run caught-it** → false claim caught by independent re-run
-- Sample receipts (offline UI): `/receipt/sample-verified`, `/receipt/sample-caught`
+Open [http://localhost:3000](http://localhost:3000).
 
 Fixture-only (no Sandbox):
 
 ```bash
-npm run test:fixture   # expects 1 failing test in the buggy fixture
+npm run test:fixture   # buggy fixture — expects failing tests
 npm test               # receipt-building unit tests
 ```
 
 ## Deploy
 
-Use the Deploy button above, or:
-
 ```bash
 npx vercel --prod
 ```
 
-On Vercel, OIDC covers Sandbox + Gateway via `getVercelOidcToken()` (request header). Still set `AI_GATEWAY_API_KEY` if you prefer a key for Gateway. Connect a **Blob** store. Ensure Sandbox is enabled for the team.
+On Vercel, OIDC covers Sandbox + Gateway via `getVercelOidcToken()`. Connect a **Blob** store. Ensure Sandbox is enabled for the team.
 
-Function duration: `/api/run` sets `maxDuration = 300` (Hobby cap). Sandbox session timeout is 270s so the run can finish inside the function.
+Function duration: `/api/run` sets `maxDuration = 300` (Hobby cap). Sandbox session timeout is 270s.
 
 ## Receipt fields
 
-- Customer bug report
-- Agent claim (`CLAIM: FIXED` marker) vs independent result
-- Every command: exit code, truncated stdout/stderr
-- Diff of tracked source files
-- Per-test pass/fail from the **fresh** sandbox re-run
-- Per LLM step: model, provider, tokens, cost (from real Gateway `providerMetadata`; missing fields → `"unavailable"`, never invented)
-- **Download JSON** of the same payload
+- Big verdict badge: **Verified** / **Caught: claim not supported** / **Not fixed**
+- Side-by-side: agent claim + files changed + tests it ran vs fresh sandbox id + visible/hidden results + failing output
+- Steps, tokens, cost, model, duration, and the diff
+- After hidden-mode verification: held-out test source reveal
+- **Download JSON** of the same payload (`/api/receipt/<id>`)
 
 ## What we learned / rough edges
 
-Real DX friction hit while building this template:
-
-1. **Alias / resolved `modelId`** — Gateway may echo the requested alias rather than a versioned resolved id. Related: [vercel/ai#21213](https://github.com/vercel/ai/issues/21213). The receipt records whatever came back and notes when original/canonical slugs match.
-2. **`providerMetadata.gateway.cost` is not always present** — when absent we store `"unavailable"` and bump `stepsMissingCost`. Generation Lookup (`GET /v1/generation?id=…`) is async and can 404 briefly after a call; we prefer the inline metadata and do not invent costs.
-3. **`sandbox.snapshot()` stops the session** — you must create a new sandbox from `snapshotId` to keep working. Easy to miss on first read of the SDK.
-4. **`runCommand` has no shell** — pipes/`&&` need `bash -c`. Non-zero exits do **not** throw; always check `exitCode`.
-5. **File methods vs cwd** — `writeFiles` / `readFileToBuffer` are rooted at `/vercel/sandbox`, but command cwd defaults may differ. Prefer absolute paths under `/vercel/sandbox`.
-6. **Network policy shape** — allow-lists are domain → rule objects (with optional `transform` for credential brokering). Install needs registry hosts; agent phase in this demo is `deny-all` because the model stays on the host.
-7. **OIDC is a request header on Functions** — `VERCEL_OIDC_TOKEN` env is for local `vercel env pull`. On deploy, use `getVercelOidcToken()` / SDK built-ins that read `x-vercel-oidc-token`. A naive `process.env.VERCEL_OIDC_TOKEN` check will false-negative.
-8. **Hobby `maxDuration` is 300s** — asking for 800 fails or is clamped; keep sandbox timeout under the function budget.
-9. **Snapshot expiration** — Sandbox accepts `0` (never) or `>= 1 day`. Values like 1 hour are rejected.
-10. **Workspace root** — do not assume `/vercel/sandbox` exists; `mkdir -p` (or use `sandbox.cwd`) and keep command paths consistent.
-11. **Receipts across instances** — `/tmp` and in-memory are same-instance only. Use Vercel Blob (or similar) for `/receipt/[id]` after redirect.
-12. **AI SDK stop helpers** — use `isStepCount` (AI SDK 7); older `stepCountIs` / `maxSteps` memories will fail typecheck.
-13. **Vitest JSON reporter** — missing/empty JSON never counts as passed; clear before each run.
-14. **Harness tampering** — allowlist `writeFile` to `src/pricing.ts` and restore pristine harness files before independent verification.
-15. **Public `/api/run` is paid compute** — gate with `RUN_SECRET` or Deployment Protection + `ALLOW_PUBLIC_RUNS`.
+1. **Alias / resolved `modelId`** — Gateway may echo the requested alias rather than a versioned resolved id. Related: [vercel/ai#21213](https://github.com/vercel/ai/issues/21213).
+2. **`providerMetadata.gateway.cost` is not always present** — missing → `"unavailable"`, never invented.
+3. **`sandbox.snapshot()` stops the session** — create a new sandbox from `snapshotId` to keep working.
+4. **`runCommand` has no shell** — pipes/`&&` need `bash -c`. Non-zero exits do **not** throw.
+5. **File methods vs cwd** — prefer absolute paths under `/vercel/sandbox` after `mkdir -p`.
+6. **OIDC is a request header on Functions** — naive `process.env.VERCEL_OIDC_TOKEN` checks false-negative on deploy.
+7. **Hobby `maxDuration` is 300s** — keep sandbox timeout under the function budget.
+8. **Snapshot expiration** — Sandbox accepts `0` or `>= 1 day`.
+9. **Receipts across instances** — use Vercel Blob for `/receipt/[id]` after redirect.
+10. **Held-out tests** — omit `*.hidden.test.ts` from the agent copy; verify with pristine fixture + agent diff in a fresh VM.
+11. **Public `/api/run` is paid compute** — gate with `RUN_SECRET` or Deployment Protection + `ALLOW_PUBLIC_RUNS`.
+12. **Deployment Protection is edge-wide** — use Shareable Links / bypass secret for video; there is no path-only exception for GET.
 
 ## Project layout
 
 ```
-fixtures/buggy-pricing/   # intentional bug + Vitest + BUG_REPORT.md
+fixtures/buggy-pricing/   # dual-bug fixture + visible/hidden Vitest
 src/lib/agent/            # ToolLoopAgent, tools, prompts, run pipeline
-src/lib/sandbox/          # create, network policies, snapshot verify
+src/lib/sandbox/          # create, network policies, pristine+diff verify
 src/lib/receipt/          # parse tests, extract LLM steps, totals, store
 src/app/                  # UI + /api/run + receipt pages
 samples/                  # offline sample receipts (isSample: true)

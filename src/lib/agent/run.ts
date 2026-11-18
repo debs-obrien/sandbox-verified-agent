@@ -3,12 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ToolLoopAgent, isStepCount } from "ai";
 import { resolveAuthStatus } from "../auth";
-import {
-  CAUGHT_MAX_STEPS,
-  DEFAULT_MODEL,
-  FIXTURE_DIRNAME,
-  NORMAL_MAX_STEPS,
-} from "../config";
+import { DEFAULT_MODEL, FIXTURE_DIRNAME, NORMAL_MAX_STEPS } from "../config";
 import { unifiedDiff } from "../receipt/diff";
 import { extractLlmSteps } from "../receipt/extract-llm-steps";
 import { saveReceipt } from "../receipt/store";
@@ -21,11 +16,18 @@ import {
 } from "../sandbox/setup";
 import {
   independentVerify,
+  readAgentPricing,
   runFixtureTests,
   takeSnapshot,
   UNAVAILABLE,
 } from "../sandbox/verify";
-import type { CommandLog, DemoMode, FileDiff, Receipt } from "../types";
+import type {
+  CommandLog,
+  DemoMode,
+  FileDiff,
+  Receipt,
+  VerificationResult,
+} from "../types";
 import { createSandboxTools } from "./tools";
 import {
   instructionsFor,
@@ -33,10 +35,30 @@ import {
   userPromptFor,
 } from "./prompts";
 
-const TRACKED_RELATIVE = [
-  `${FIXTURE_DIRNAME}/src/pricing.ts`,
-  `${FIXTURE_DIRNAME}/src/pricing.test.ts`,
-];
+const TRACKED_RELATIVE = [`${FIXTURE_DIRNAME}/src/pricing.ts`];
+
+function emptyVerification(
+  beforeSnapshotId: string | typeof UNAVAILABLE = UNAVAILABLE,
+  afterSnapshotId: string | typeof UNAVAILABLE = UNAVAILABLE,
+): VerificationResult {
+  return {
+    independentTests: {
+      passed: false,
+      exitCode: -1,
+      stdout: "",
+      stderr: "",
+      tests: [],
+      summary: { total: 0, passed: 0, failed: 0, skipped: 0 },
+    },
+    visibleTests: [],
+    hiddenTests: [],
+    verified: false,
+    beforeSnapshotId,
+    afterSnapshotId,
+    verificationSandboxId: UNAVAILABLE,
+    method: "pristine-plus-diff",
+  };
+}
 
 async function readSandboxText(
   sandbox: {
@@ -56,6 +78,7 @@ export async function runVerifiedAgent(options: {
   const model = options.model ?? DEFAULT_MODEL;
   const id = randomUUID();
   const createdAt = new Date().toISOString();
+  const startedMs = Date.now();
   const commandLog: CommandLog[] = [];
   resetCommandCounter();
 
@@ -70,6 +93,8 @@ export async function runVerifiedAgent(options: {
     const receipt: Receipt = {
       id,
       createdAt,
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedMs,
       mode,
       isSample: false,
       bugReport,
@@ -83,24 +108,11 @@ export async function runVerifiedAgent(options: {
       llmSteps: [],
       totals: sumLlmTotals([]),
       diffs: [],
-      verification: {
-        independentTests: {
-          passed: false,
-          exitCode: -1,
-          stdout: "",
-          stderr: "",
-          tests: [],
-          summary: { total: 0, passed: 0, failed: 0, skipped: 0 },
-        },
-        verified: false,
-        beforeSnapshotId: UNAVAILABLE,
-        afterSnapshotId: UNAVAILABLE,
-        verificationSandboxId: UNAVAILABLE,
-      },
+      verification: emptyVerification(),
       verdict: "error",
       errorMessage: `Missing credentials:\n- ${auth.missing.join("\n- ")}`,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
-      architectureNotes: architectureNotes(),
+      architectureNotes: architectureNotes(mode),
     };
     await saveReceipt(receipt);
     return receipt;
@@ -115,7 +127,8 @@ export async function runVerifiedAgent(options: {
   let fixtureRoot = "";
 
   try {
-    const prepared = await createPreparedSandbox(commandLog);
+    // Hidden mode: omit *.hidden.test.ts from the agent sandbox.
+    const prepared = await createPreparedSandbox(commandLog, { mode });
     agentSandbox = prepared.sandbox;
     sandboxRoot = prepared.sandboxRoot;
     fixtureRoot = prepared.fixtureRoot;
@@ -144,7 +157,7 @@ export async function runVerifiedAgent(options: {
       commandLog,
     );
 
-    const maxSteps = mode === "caught" ? CAUGHT_MAX_STEPS : NORMAL_MAX_STEPS;
+    const maxSteps = NORMAL_MAX_STEPS;
     const tools = createSandboxTools(agentSandbox, commandLog, {
       sandboxRoot,
       fixtureRoot,
@@ -186,20 +199,27 @@ export async function runVerifiedAgent(options: {
       commandLog,
     );
 
+    // Capture agent pricing.ts before tearing down the agent sandbox.
+    const agentPricing = await readAgentPricing(agentSandbox);
+
     const after = await takeSnapshot(agentSandbox);
     afterSnapshotId = after.snapshotId;
     agentSandbox = null;
 
-    const verify = await independentVerify(after.snapshotId, commandLog);
+    // Fresh pristine fixture + agent diff + held-out hidden tests.
+    const verify = await independentVerify(agentPricing, commandLog);
     const verified = verify.tests.passed === true;
     const verdict = decideVerdict({
       claimedFixed: claim.claimedFixed,
       verified,
     });
 
+    const finishedAt = new Date().toISOString();
     const receipt: Receipt = {
       id,
       createdAt,
+      finishedAt,
+      durationMs: Date.now() - startedMs,
       mode,
       isSample: false,
       bugReport,
@@ -216,19 +236,18 @@ export async function runVerifiedAgent(options: {
       agentTests: agentTestsAfter ?? agentTestsBefore,
       verification: {
         independentTests: verify.tests,
+        visibleTests: verify.visibleTests,
+        hiddenTests: verify.hiddenTests,
         verified,
         beforeSnapshotId,
         afterSnapshotId,
         verificationSandboxId: verify.verificationSandboxId,
+        method: "pristine-plus-diff",
       },
+      hiddenTestSource: mode === "hidden" ? verify.hiddenTestSource : undefined,
       verdict,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
-      architectureNotes: architectureNotes(
-        mode,
-        maxSteps,
-        verify.restoredHarness,
-        fixtureRoot,
-      ),
+      architectureNotes: architectureNotes(mode, maxSteps, fixtureRoot),
     };
 
     await saveReceipt(receipt);
@@ -242,6 +261,8 @@ export async function runVerifiedAgent(options: {
     const receipt: Receipt = {
       id,
       createdAt,
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedMs,
       mode,
       isSample: false,
       bugReport,
@@ -255,24 +276,11 @@ export async function runVerifiedAgent(options: {
       llmSteps: [],
       totals: sumLlmTotals([]),
       diffs: [],
-      verification: {
-        independentTests: {
-          passed: false,
-          exitCode: -1,
-          stdout: "",
-          stderr: "",
-          tests: [],
-          summary: { total: 0, passed: 0, failed: 0, skipped: 0 },
-        },
-        verified: false,
-        beforeSnapshotId,
-        afterSnapshotId,
-        verificationSandboxId: UNAVAILABLE,
-      },
+      verification: emptyVerification(beforeSnapshotId, afterSnapshotId),
       verdict: "error",
       errorMessage: message,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
-      architectureNotes: architectureNotes(undefined, undefined, undefined, fixtureRoot),
+      architectureNotes: architectureNotes(mode, undefined, fixtureRoot),
     };
     await saveReceipt(receipt);
     return receipt;
@@ -282,7 +290,6 @@ export async function runVerifiedAgent(options: {
 function architectureNotes(
   mode?: DemoMode,
   maxSteps?: number,
-  restoredHarness?: string[],
   fixtureRoot?: string,
 ): string[] {
   return [
@@ -292,14 +299,14 @@ function architectureNotes(
     "LLM (AI SDK ToolLoopAgent) runs on the Next.js host via AI Gateway — not inside the sandbox.",
     "Auth: getVercelOidcToken() (x-vercel-oidc-token header on Vercel, VERCEL_OIDC_TOKEN locally) or AI_GATEWAY_API_KEY / token trio.",
     "Sandbox tools: runCommand, readFile, writeFile (writeFile allowlisted to src/pricing.ts only).",
-    "Verification: snapshot before → agent work → snapshot after → fresh sandbox → restore pristine harness → clear vitest-results.json → re-run vitest.",
+    "Verification: pristine fixture copy (including held-out *.hidden.test.ts) + agent's pricing.ts only, in a fresh sandbox the agent never touched.",
     "Snapshot expiration: 1 day (Sandbox API rejects values between 0 and 1 day exclusive).",
-    restoredHarness?.length
-      ? `Restored trusted harness files before verify: ${restoredHarness.join(", ")}.`
-      : "Trusted harness restore runs before independent verify.",
+    mode === "hidden"
+      ? "Hidden mode: agent sandbox omits *.hidden.test.ts. Agent may honestly pass visible tests with an incomplete fix; held-out tests catch it."
+      : "Normal mode: agent sees the full suite (visible + hidden). A real fix must satisfy both.",
     mode
       ? `Mode=${mode}; stopWhen=isStepCount(${maxSteps ?? "?"}).`
       : "Mode unset.",
-    "Caught-it mode uses a weaker prompt + tiny step budget so the agent claims FIXED without a correct fix; independent re-run fails.",
+    "Held-out tests are standard practice (similar to SWE-bench). The independent check runs in a sandbox the agent cannot edit.",
   ];
 }

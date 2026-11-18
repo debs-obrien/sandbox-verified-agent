@@ -1,6 +1,8 @@
 {
   "id": "sample-verified",
   "createdAt": "2026-11-17T12:00:00.000Z",
+  "finishedAt": "2026-11-17T12:02:00.000Z",
+  "durationMs": 120000,
   "mode": "normal",
   "isSample": true,
   "sampleLabel": "synthetic UI fixture — not a live run",
@@ -8,8 +10,8 @@
   "modelConfigured": "anthropic/claude-haiku-4.5",
   "agentClaim": {
     "claimedFixed": true,
-    "summary": "CLAIM: FIXED — changed the bulk-discount threshold from `>` to `>=` so quantity 3 qualifies. All Vitest tests passed in the agent sandbox.",
-    "rawText": "The threshold used `quantity > 3`. I changed it to `quantity >= 3` and re-ran npm test. CLAIM: FIXED"
+    "summary": "CLAIM: FIXED — changed the bulk-discount threshold from `>` to `>=` and Math.floor to Math.round so quantity 3 qualifies and fractional cents round correctly. All Vitest tests passed.",
+    "rawText": "Fixed threshold to >= 3 and rounding to Math.round. Re-ran npm test. CLAIM: FIXED"
   },
   "commands": [
     {
@@ -29,7 +31,7 @@
       "args": ["test"],
       "cwd": "/vercel/sandbox/buggy-pricing",
       "exitCode": 1,
-      "stdout": "FAIL applyBulkDiscount > applies 10% off when buying exactly 3",
+      "stdout": "FAIL applyBulkDiscount (visible) > applies 10% off when buying exactly 3",
       "stderr": "",
       "truncated": false,
       "at": "2026-11-17T12:00:40.000Z"
@@ -40,7 +42,7 @@
       "args": ["test"],
       "cwd": "/vercel/sandbox/buggy-pricing",
       "exitCode": 0,
-      "stdout": "Test Files  1 passed (1)",
+      "stdout": "Test Files  2 passed (2)",
       "stderr": "",
       "truncated": false,
       "at": "2026-11-17T12:01:20.000Z"
@@ -105,55 +107,90 @@
   "diffs": [
     {
       "path": "src/pricing.ts",
-      "before": "if (item.quantity > 3) {",
-      "after": "if (item.quantity >= 3) {",
-      "unifiedDiff": "--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@\n-if (item.quantity > 3) {\n+if (item.quantity >= 3) {\n"
+      "before": "if (item.quantity > 3) {\n    return Math.floor(subtotal * 0.9);",
+      "after": "if (item.quantity >= 3) {\n    return Math.round(subtotal * 0.9);",
+      "unifiedDiff": "--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@\n-if (item.quantity > 3) {\n-    return Math.floor(subtotal * 0.9);\n+if (item.quantity >= 3) {\n+    return Math.round(subtotal * 0.9);\n"
     }
   ],
+  "agentTests": {
+    "passed": true,
+    "exitCode": 0,
+    "stdout": "Test Files  2 passed (2)",
+    "stderr": "",
+    "tests": [
+      {
+        "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+        "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+        "status": "passed",
+        "durationMs": 1
+      },
+      {
+        "name": "rounds fractional discount cents to nearest cent (not floor)",
+        "fullName": "applyBulkDiscount (hidden) rounds fractional discount cents to nearest cent (not floor)",
+        "status": "passed",
+        "durationMs": 1,
+        "heldOut": true
+      }
+    ],
+    "summary": { "total": 9, "passed": 9, "failed": 0, "skipped": 0 }
+  },
   "verification": {
     "independentTests": {
       "passed": true,
       "exitCode": 0,
-      "stdout": "Test Files  1 passed (1)",
+      "stdout": "Test Files  2 passed (2)",
       "stderr": "",
       "tests": [
         {
           "name": "charges full price for a single item",
-          "fullName": "applyBulkDiscount charges full price for a single item",
+          "fullName": "applyBulkDiscount (visible) charges full price for a single item",
           "status": "passed",
           "durationMs": 2
         },
         {
-          "name": "charges full price for two items (below threshold)",
-          "fullName": "applyBulkDiscount charges full price for two items (below threshold)",
-          "status": "passed",
-          "durationMs": 1
-        },
-        {
           "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
-          "fullName": "applyBulkDiscount applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+          "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
           "status": "passed",
           "durationMs": 1
         },
         {
-          "name": "applies 10% off when buying more than 3",
-          "fullName": "applyBulkDiscount applies 10% off when buying more than 3",
+          "name": "rounds fractional discount cents to nearest cent (not floor)",
+          "fullName": "applyBulkDiscount (hidden) rounds fractional discount cents to nearest cent (not floor)",
           "status": "passed",
-          "durationMs": 1
-        },
-        {
-          "name": "sums discounted line items",
-          "fullName": "cartTotalCents sums discounted line items",
-          "status": "passed",
-          "durationMs": 1
+          "durationMs": 1,
+          "heldOut": true
         }
       ],
-      "summary": { "total": 5, "passed": 5, "failed": 0, "skipped": 0 }
+      "summary": { "total": 9, "passed": 9, "failed": 0, "skipped": 0 }
     },
+    "visibleTests": [
+      {
+        "name": "charges full price for a single item",
+        "fullName": "applyBulkDiscount (visible) charges full price for a single item",
+        "status": "passed",
+        "durationMs": 2
+      },
+      {
+        "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+        "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+        "status": "passed",
+        "durationMs": 1
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "rounds fractional discount cents to nearest cent (not floor)",
+        "fullName": "applyBulkDiscount (hidden) rounds fractional discount cents to nearest cent (not floor)",
+        "status": "passed",
+        "durationMs": 1,
+        "heldOut": true
+      }
+    ],
     "verified": true,
     "beforeSnapshotId": "snap_sample_before",
     "afterSnapshotId": "snap_sample_after",
-    "verificationSandboxId": "sbx_sample_verify"
+    "verificationSandboxId": "sbx_sample_verify",
+    "method": "pristine-plus-diff"
   },
   "verdict": "verified",
   "networkPolicyNotes": [

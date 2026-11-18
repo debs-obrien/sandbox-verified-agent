@@ -13,7 +13,8 @@ export const TRUSTED_HARNESS_FILES = [
   "tsconfig.json",
   "vitest.config.ts",
   "BUG_REPORT.md",
-  "src/pricing.test.ts",
+  "src/pricing.visible.test.ts",
+  "src/pricing.hidden.test.ts",
 ] as const;
 
 /** Only this implementation file may be written by the agent. */

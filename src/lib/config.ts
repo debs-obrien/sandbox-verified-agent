@@ -19,14 +19,8 @@ export const FIXTURE_DIRNAME = "buggy-pricing";
 /** Truncate command stdout/stderr in the receipt. */
 export const LOG_TRUNCATE_CHARS = 4_000;
 
-/** Max agent steps in normal mode (kept modest for Hobby 300s). */
+/** Max agent steps (kept modest for Hobby 300s). Same for normal + hidden. */
 export const NORMAL_MAX_STEPS = 8;
-
-/**
- * Caught-it mode: deliberately tiny step budget so the agent cannot
- * complete a real fix+test cycle before it is forced to stop.
- */
-export const CAUGHT_MAX_STEPS = 2;
 
 /**
  * Hobby plan function maxDuration is 300s. Keep the sandbox session under

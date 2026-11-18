@@ -7,14 +7,17 @@ import {
   SANDBOX_TIMEOUT_MS,
   SNAPSHOT_EXPIRATION_MS,
 } from "../config";
-import type { CommandLog } from "../types";
+import type { CommandLog, DemoMode } from "../types";
 import { runLogged } from "./commands";
 import { DENY_ALL_POLICY, NPM_INSTALL_POLICY } from "./network";
 import { ensureSandboxWorkspace } from "./paths";
 
+const HIDDEN_TEST_SUFFIX = ".hidden.test.ts";
+
 async function collectFiles(
   dir: string,
   base = dir,
+  opts?: { excludeHiddenTests?: boolean },
 ): Promise<Array<{ relative: string; content: Buffer }>> {
   const entries = await readdir(dir, { withFileTypes: true });
   const files: Array<{ relative: string; content: Buffer }> = [];
@@ -25,13 +28,14 @@ async function collectFiles(
       continue;
     }
     if (entry.isDirectory()) {
-      files.push(...(await collectFiles(full, base)));
+      files.push(...(await collectFiles(full, base, opts)));
     } else if (entry.isFile()) {
+      const relative = path.relative(base, full).replaceAll("\\", "/");
+      if (opts?.excludeHiddenTests && relative.endsWith(HIDDEN_TEST_SUFFIX)) {
+        continue;
+      }
       const content = await readFile(full);
-      files.push({
-        relative: path.relative(base, full).replaceAll("\\", "/"),
-        content,
-      });
+      files.push({ relative, content });
     }
   }
   return files;
@@ -43,7 +47,6 @@ function createOpts() {
     timeout: SANDBOX_TIMEOUT_MS,
     persistent: false as const,
     resources: { vcpus: 2 },
-    // Snapshot TTL must be 0 (never) or >= 1 day per Sandbox API.
     snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
     keepLastSnapshots: {
       count: 3,
@@ -55,15 +58,23 @@ function createOpts() {
   };
 }
 
-/**
- * Create a sandbox, ensure the workspace root exists, copy the fixture in,
- * npm install with a registry allow-list, then lock the network to deny-all.
- */
-export async function createPreparedSandbox(commandLog: CommandLog[]): Promise<{
+export type PreparedSandbox = {
   sandbox: Sandbox;
   sandboxRoot: string;
   fixtureRoot: string;
-}> {
+};
+
+/**
+ * Create a sandbox, copy the fixture (optionally omitting hidden tests),
+ * npm install, then deny-all for agent work.
+ */
+export async function createPreparedSandbox(
+  commandLog: CommandLog[],
+  opts?: { mode?: DemoMode; includeHiddenTests?: boolean },
+): Promise<PreparedSandbox> {
+  const mode = opts?.mode ?? "normal";
+  const includeHiddenTests = opts?.includeHiddenTests ?? mode === "normal";
+
   const localFixture = path.join(process.cwd(), "fixtures", "buggy-pricing");
   const st = await stat(localFixture);
   if (!st.isDirectory()) {
@@ -80,8 +91,10 @@ export async function createPreparedSandbox(commandLog: CommandLog[]): Promise<{
     commandLog,
   );
 
-  const files = await collectFiles(localFixture);
-  // writeFiles paths are relative to the sandbox filesystem root.
+  const files = await collectFiles(localFixture, localFixture, {
+    excludeHiddenTests: !includeHiddenTests,
+  });
+
   await sandbox.writeFiles(
     files.map((f) => ({
       path: `${FIXTURE_DIRNAME}/${f.relative}`,
@@ -101,7 +114,6 @@ export async function createPreparedSandbox(commandLog: CommandLog[]): Promise<{
     );
   }
 
-  // Lock down egress for the agent phase — model calls stay on the host.
   await sandbox.update({ networkPolicy: DENY_ALL_POLICY });
 
   return { sandbox, sandboxRoot, fixtureRoot };
@@ -110,7 +122,7 @@ export async function createPreparedSandbox(commandLog: CommandLog[]): Promise<{
 export async function createSandboxFromSnapshot(
   snapshotId: string,
   commandLog?: CommandLog[],
-): Promise<{ sandbox: Sandbox; sandboxRoot: string; fixtureRoot: string }> {
+): Promise<PreparedSandbox> {
   const sandbox = await Sandbox.create({
     ...createOpts(),
     networkPolicy: DENY_ALL_POLICY,
@@ -122,4 +134,4 @@ export async function createSandboxFromSnapshot(
   return { sandbox, ...paths };
 }
 
-export { createOpts };
+export { createOpts, HIDDEN_TEST_SUFFIX };

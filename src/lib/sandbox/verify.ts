@@ -1,18 +1,21 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { Sandbox } from "@vercel/sandbox";
 import { FIXTURE_DIRNAME, SNAPSHOT_EXPIRATION_MS } from "../config";
 import { parseVitestJson } from "../receipt/parse-vitest";
-import type { CommandLog, TestSuiteResult, Unavailable } from "../types";
+import type {
+  CommandLog,
+  TestCaseResult,
+  TestSuiteResult,
+  Unavailable,
+} from "../types";
 import { runLogged } from "./commands";
-import { restoreTrustedHarness } from "./harness";
-import { createSandboxFromSnapshot } from "./setup";
+import { createPreparedSandbox } from "./setup";
 
 const UNAVAILABLE: Unavailable = "unavailable";
 const RESULTS_REL = `${FIXTURE_DIRNAME}/vitest-results.json`;
+const PRICING_REL = `${FIXTURE_DIRNAME}/src/pricing.ts`;
 
-/**
- * Snapshot the current sandbox filesystem. Note: snapshot() stops the session.
- * Expiration must be 0 (never) or >= 1 day.
- */
 export async function takeSnapshot(
   sandbox: Sandbox,
 ): Promise<{ snapshotId: string }> {
@@ -34,25 +37,48 @@ async function readFreshResults(sandbox: Sandbox): Promise<string | null> {
   return text.length > 0 ? text : null;
 }
 
+function splitVisibleHidden(tests: TestCaseResult[]): {
+  visibleTests: TestCaseResult[];
+  hiddenTests: TestCaseResult[];
+} {
+  const visibleTests: TestCaseResult[] = [];
+  const hiddenTests: TestCaseResult[] = [];
+  for (const t of tests) {
+    const heldOut = /\(hidden\)/i.test(t.fullName) || /\(hidden\)/i.test(t.name);
+    const tagged = { ...t, heldOut };
+    if (heldOut) hiddenTests.push(tagged);
+    else visibleTests.push(tagged);
+  }
+  return { visibleTests, hiddenTests };
+}
+
 /**
- * Restore the after-snapshot into a FRESH sandbox, restore the trusted
- * harness from the host fixture, then re-run Vitest.
+ * Independent verification the agent cannot touch:
+ * fresh pristine fixture (including hidden tests) + agent's pricing.ts only.
  */
 export async function independentVerify(
-  afterSnapshotId: string,
+  agentPricingSource: string,
   commandLog: CommandLog[],
 ): Promise<{
   tests: TestSuiteResult;
+  visibleTests: TestCaseResult[];
+  hiddenTests: TestCaseResult[];
   verificationSandboxId: string;
-  restoredHarness: string[];
+  hiddenTestSource: string;
 }> {
-  const { sandbox: verifyBox, fixtureRoot } = await createSandboxFromSnapshot(
-    afterSnapshotId,
-    commandLog,
-  );
+  const prepared = await createPreparedSandbox(commandLog, {
+    includeHiddenTests: true,
+  });
+  const { sandbox: verifyBox, fixtureRoot } = prepared;
 
   try {
-    const restoredHarness = await restoreTrustedHarness(verifyBox);
+    await verifyBox.writeFiles([
+      {
+        path: PRICING_REL,
+        content: Buffer.from(agentPricingSource, "utf8"),
+      },
+    ]);
+
     await clearStaleResults(verifyBox);
 
     const run = await runLogged(verifyBox, {
@@ -69,20 +95,28 @@ export async function independentVerify(
       run.stdout,
       run.stderr,
     );
+    const { visibleTests, hiddenTests } = splitVisibleHidden(tests.tests);
+
+    const hiddenTestSource = await readFile(
+      path.join(
+        process.cwd(),
+        "fixtures/buggy-pricing/src/pricing.hidden.test.ts",
+      ),
+      "utf8",
+    );
 
     return {
       tests,
+      visibleTests,
+      hiddenTests,
       verificationSandboxId: verifyBox.name || UNAVAILABLE,
-      restoredHarness,
+      hiddenTestSource,
     };
   } finally {
     await verifyBox.stop().catch(() => undefined);
   }
 }
 
-/**
- * Run tests in the agent's sandbox (self-check). Not used as verification.
- */
 export async function runFixtureTests(
   sandbox: Sandbox,
   fixtureRoot: string,
@@ -101,4 +135,10 @@ export async function runFixtureTests(
   return parseVitestJson(jsonText, run.exitCode, run.stdout, run.stderr);
 }
 
-export { UNAVAILABLE };
+export async function readAgentPricing(sandbox: Sandbox): Promise<string> {
+  const buf = await sandbox.readFileToBuffer({ path: PRICING_REL });
+  if (!buf) throw new Error("Agent pricing.ts missing after run");
+  return buf.toString("utf8");
+}
+
+export { UNAVAILABLE, PRICING_REL };

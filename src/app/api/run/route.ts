@@ -26,7 +26,9 @@ export async function POST(request: Request) {
     body = {};
   }
 
-  const mode: DemoMode = body.mode === "caught" ? "caught" : "normal";
+  // Accept legacy "caught" as an alias for hidden-tests mode.
+  const mode: DemoMode =
+    body.mode === "hidden" || body.mode === "caught" ? "hidden" : "normal";
   const model = resolveRunModel(body.model);
 
   beginRunSlot();

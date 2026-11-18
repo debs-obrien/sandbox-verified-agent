@@ -13,9 +13,9 @@ export function RunControls() {
   function run(mode: DemoMode) {
     setError(null);
     setStatus(
-      mode === "caught"
-        ? "Starting caught-it run (agent will claim success early)…"
-        : "Starting normal run (agent should fix and verify)…",
+      mode === "hidden"
+        ? "Starting hidden-tests run (agent sees visible tests only)…"
+        : "Starting normal run (agent sees full suite)…",
     );
     startTransition(async () => {
       try {
@@ -48,15 +48,15 @@ export function RunControls() {
           onClick={() => run("normal")}
           className="rounded-md bg-[var(--ink)] text-[var(--paper)] px-5 py-3 text-base font-semibold disabled:opacity-50 hover:opacity-90 transition"
         >
-          Run normal (real fix)
+          Run normal (full suite)
         </button>
         <button
           type="button"
           disabled={pending}
-          onClick={() => run("caught")}
+          onClick={() => run("hidden")}
           className="rounded-md border-2 border-[var(--fail)] text-[var(--fail)] px-5 py-3 text-base font-semibold disabled:opacity-50 hover:bg-[var(--fail-bg)] transition"
         >
-          Run caught-it demo
+          Run hidden-tests demo
         </button>
       </div>
       {status && (

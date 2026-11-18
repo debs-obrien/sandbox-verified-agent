@@ -22,8 +22,9 @@ export default function HomePage() {
         <p className="text-xl text-[var(--ink)]/80 max-w-2xl leading-relaxed">
           A green chat message isn&apos;t evidence. This template runs a coding
           agent against a real failing Vitest suite inside Vercel Sandbox, then
-          restores a snapshot into a fresh sandbox and re-runs the tests —
-          producing a receipt with commands, diff, cost, and verification.
+          verifies the fix in a fresh sandbox the agent never touched —
+          producing a receipt with claim vs proof, held-out tests, diff, and
+          cost.
         </p>
 
         <RunControls />
@@ -37,9 +38,9 @@ export default function HomePage() {
           </Link>
           <Link
             className="underline underline-offset-4 text-[var(--ink)]"
-            href="/receipt/sample-caught"
+            href="/receipt/sample-hidden"
           >
-            Sample receipt · caught-it
+            Sample receipt · hidden-tests caught
           </Link>
           <a
             className="underline underline-offset-4 text-[var(--muted)]"

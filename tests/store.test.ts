@@ -42,10 +42,13 @@ function sampleReceipt(id: string): Receipt {
         tests: [],
         summary: { total: 0, passed: 0, failed: 0, skipped: 0 },
       },
+      visibleTests: [],
+      hiddenTests: [],
       verified: true,
       beforeSnapshotId: "b",
       afterSnapshotId: "a",
       verificationSandboxId: "v",
+      method: "pristine-plus-diff",
     },
     verdict: "verified",
     networkPolicyNotes: [],
@@ -148,6 +151,10 @@ describe("receipt store", () => {
     const sample = await store.loadReceipt("sample-verified");
     expect(sample?.isSample).toBe(true);
     expect(sample?.verdict).toBe("verified");
+
+    const hidden = await store.loadReceipt("sample-hidden");
+    expect(hidden?.mode).toBe("hidden");
+    expect(hidden?.verdict).toBe("claim-failed-verification");
   });
 
   it("rejects unsafe receipt ids", async () => {
