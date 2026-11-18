@@ -135,6 +135,66 @@ describe("receipt store", () => {
     );
   });
 
+  it("persists a Caught (claim-failed-verification) receipt via Blob", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_test";
+    vi.resetModules();
+    store = await import("../src/lib/receipt/store");
+    store.__test.memory.clear();
+
+    const receipt = sampleReceipt("blob-caught-1");
+    receipt.mode = "hidden";
+    receipt.verdict = "claim-failed-verification";
+    receipt.verification.verified = false;
+    receipt.verification.hiddenTests = [
+      {
+        name: "discounts each qualifying SKU line independently",
+        fullName:
+          "cartTotalCents (hidden) discounts each qualifying SKU line independently",
+        status: "failed",
+        durationMs: 3,
+        errorMessage: "expected 14580 to be 14700",
+        heldOut: true,
+      },
+    ];
+    receipt.verification.independentTests.passed = false;
+    receipt.verification.independentTests.exitCode = 1;
+    receipt.verification.independentTests.stdout =
+      "FAIL cartTotalCents (hidden) > discounts each qualifying SKU line independently";
+    receipt.hiddenTestSource =
+      'describe("cartTotalCents (hidden)", () => { /* held-out */ });';
+
+    putMock.mockResolvedValue({
+      url: "https://blob.example/receipts/blob-caught-1.json",
+    });
+    await store.saveReceipt(receipt);
+
+    store.__test.memory.clear();
+    const body = JSON.stringify(receipt);
+    getMock.mockResolvedValue({
+      statusCode: 200,
+      stream: new Response(body).body,
+      headers: new Headers(),
+      blob: {
+        url: "https://blob.example/x",
+        downloadUrl: "https://blob.example/x",
+        pathname: "receipts/blob-caught-1.json",
+        contentDisposition: "",
+        cacheControl: "",
+        uploadedAt: new Date(),
+        etag: "e",
+        contentType: "application/json",
+        size: body.length,
+      },
+    });
+
+    const loaded = await store.loadReceipt("blob-caught-1");
+    expect(loaded?.verdict).toBe("claim-failed-verification");
+    expect(loaded?.agentClaim.claimedFixed).toBe(true);
+    expect(loaded?.verification.verified).toBe(false);
+    expect(loaded?.verification.hiddenTests[0]?.status).toBe("failed");
+    expect(loaded?.hiddenTestSource).toContain("cartTotalCents (hidden)");
+  });
+
   it("falls back to local filesystem when Blob token is unset", async () => {
     const receipt = sampleReceipt("local-receipt-1");
     await store.saveReceipt(receipt);

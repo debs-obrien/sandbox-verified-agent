@@ -11,7 +11,7 @@
   "agentClaim": {
     "submitted": true,
     "claimedFixed": true,
-    "summary": "Changed `>` to `>=` so quantity 3 gets the discount. Visible Vitest suite passed.",
+    "summary": "Changed `>` to `>=` on the quantity checks. Visible Vitest suite passed.",
     "filesChanged": ["src/pricing.ts"],
     "testsRun": "npm test — visible suite passed",
     "rawText": "{\"fixed\":true,\"summary\":\"Changed > to >=\",\"filesChanged\":[\"src/pricing.ts\"],\"testsRun\":\"npm test — pass\"}"
@@ -56,7 +56,7 @@
       "args": ["test"],
       "cwd": "/vercel/sandbox/buggy-pricing",
       "exitCode": 1,
-      "stdout": "FAIL cartTotalCents (hidden) > discounts each qualifying SKU line independently",
+      "stdout": "FAIL cartTotalCents (hidden) > discounts each qualifying SKU line independently\nFAIL cartTotalCents (hidden) > sums multi-line carts when every line is below the promo threshold",
       "stderr": "",
       "truncated": false,
       "at": "2026-11-17T12:06:50.000Z"
@@ -115,9 +115,9 @@
   "diffs": [
     {
       "path": "src/pricing.ts",
-      "before": "if (item.quantity > 3) {",
-      "after": "if (item.quantity >= 3) {",
-      "unifiedDiff": "--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@\n-if (item.quantity > 3) {\n+if (item.quantity >= 3) {\n"
+      "before": "if (item.quantity > 3) {\n…\nif (totalQuantity > 3) {",
+      "after": "if (item.quantity >= 3) {\n…\nif (totalQuantity >= 3) {",
+      "unifiedDiff": "--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@\n-if (item.quantity > 3) {\n+if (item.quantity >= 3) {\n@@\n-if (totalQuantity > 3) {\n+if (totalQuantity >= 3) {\n"
     }
   ],
   "agentTests": {
@@ -131,6 +131,12 @@
         "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
         "status": "passed",
         "durationMs": 1
+      },
+      {
+        "name": "returns the line total for a single below-threshold item",
+        "fullName": "cartTotalCents (visible) returns the line total for a single below-threshold item",
+        "status": "passed",
+        "durationMs": 1
       }
     ],
     "summary": { "total": 5, "passed": 5, "failed": 0, "skipped": 0 }
@@ -139,7 +145,7 @@
     "independentTests": {
       "passed": false,
       "exitCode": 1,
-      "stdout": "FAIL cartTotalCents (hidden) > discounts each qualifying SKU line independently\nAssertionError: expected 14580 to be 14700",
+      "stdout": "FAIL cartTotalCents (hidden) > sums multi-line carts when every line is below the promo threshold\nAssertionError: expected 6660 to be 7400\nFAIL cartTotalCents (hidden) > discounts each qualifying SKU line independently\nAssertionError: expected 14580 to be 14700",
       "stderr": "",
       "tests": [
         {
@@ -147,6 +153,14 @@
           "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
           "status": "passed",
           "durationMs": 1
+        },
+        {
+          "name": "sums multi-line carts when every line is below the promo threshold",
+          "fullName": "cartTotalCents (hidden) sums multi-line carts when every line is below the promo threshold",
+          "status": "failed",
+          "durationMs": 2,
+          "errorMessage": "expected 6660 to be 7400",
+          "heldOut": true
         },
         {
           "name": "discounts each qualifying SKU line independently",
@@ -165,7 +179,7 @@
           "heldOut": true
         }
       ],
-      "summary": { "total": 9, "passed": 7, "failed": 2, "skipped": 0 }
+      "summary": { "total": 10, "passed": 7, "failed": 3, "skipped": 0 }
     },
     "visibleTests": [
       {
@@ -173,9 +187,23 @@
         "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
         "status": "passed",
         "durationMs": 1
+      },
+      {
+        "name": "returns the line total for a single below-threshold item",
+        "fullName": "cartTotalCents (visible) returns the line total for a single below-threshold item",
+        "status": "passed",
+        "durationMs": 1
       }
     ],
     "hiddenTests": [
+      {
+        "name": "sums multi-line carts when every line is below the promo threshold",
+        "fullName": "cartTotalCents (hidden) sums multi-line carts when every line is below the promo threshold",
+        "status": "failed",
+        "durationMs": 2,
+        "errorMessage": "expected 6660 to be 7400",
+        "heldOut": true
+      },
       {
         "name": "discounts each qualifying SKU line independently",
         "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
@@ -199,7 +227,7 @@
     "verificationSandboxId": "sbx_sample_verify_h",
     "method": "pristine-plus-diff"
   },
-  "hiddenTestSource": "import { describe, expect, it } from \"vitest\";\nimport { applyBulkDiscount, cartTotalCents } from \"./pricing\";\n\ndescribe(\"cartTotalCents (hidden)\", () => {\n  it(\"discounts each qualifying SKU line independently\", () => {\n    expect(\n      cartTotalCents([\n        { sku: \"HOODIE-NAVY\", quantity: 3, unitPriceCents: 5000 },\n        { sku: \"SOCKS\", quantity: 1, unitPriceCents: 1200 },\n      ]),\n    ).toBe(13500 + 1200);\n  });\n});\n",
+  "hiddenTestSource": "import { describe, expect, it } from \"vitest\";\nimport { applyBulkDiscount, cartTotalCents } from \"./pricing\";\n\ndescribe(\"cartTotalCents (hidden)\", () => {\n  it(\"sums multi-line carts when every line is below the promo threshold\", () => {\n    expect(\n      cartTotalCents([\n        { sku: \"HOODIE-NAVY\", quantity: 1, unitPriceCents: 5000 },\n        { sku: \"SOCKS\", quantity: 2, unitPriceCents: 1200 },\n      ]),\n    ).toBe(5000 + 2400);\n  });\n\n  it(\"discounts each qualifying SKU line independently\", () => {\n    expect(\n      cartTotalCents([\n        { sku: \"HOODIE-NAVY\", quantity: 3, unitPriceCents: 5000 },\n        { sku: \"SOCKS\", quantity: 1, unitPriceCents: 1200 },\n      ]),\n    ).toBe(13500 + 1200);\n  });\n});\n",
   "verdict": "claim-failed-verification",
   "networkPolicyNotes": [
     "Install phase: networkPolicy allow-list limited to npm registry hosts.",

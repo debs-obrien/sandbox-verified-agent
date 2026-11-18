@@ -14,6 +14,15 @@ describe("applyBulkDiscount (hidden)", () => {
 });
 
 describe("cartTotalCents (hidden)", () => {
+  it("sums multi-line carts when every line is below the promo threshold", () => {
+    expect(
+      cartTotalCents([
+        { sku: "HOODIE-NAVY", quantity: 1, unitPriceCents: 5000 },
+        { sku: "SOCKS", quantity: 2, unitPriceCents: 1200 },
+      ]),
+    ).toBe(5000 + 2400);
+  });
+
   it("discounts each qualifying SKU line independently", () => {
     expect(
       cartTotalCents([

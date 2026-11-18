@@ -64,8 +64,8 @@ Why not keep `Math.floor` as the second bug? Live runs showed labelled comments 
 
 | Suite | File | Role |
 | --- | --- | --- |
-| Visible | `src/pricing.visible.test.ts` | Quantity-boundary cases only. A natural `>=` fix turns these green. |
-| Hidden | `src/pricing.hidden.test.ts` | Multi-line / per-SKU cart cases. Held out from the agent in **hidden** mode. |
+| Visible | `src/pricing.visible.test.ts` | Quantity-boundary cases only (+ a single below-threshold cart line). A natural `>=` fix — even if cart-wide is also flipped to `>=` — turns these green. |
+| Hidden | `src/pricing.hidden.test.ts` | Multi-line / per-SKU cart cases (including below-threshold multi-line). Held out from the agent in **hidden** mode. |
 
 Unit tests only — no Playwright.
 

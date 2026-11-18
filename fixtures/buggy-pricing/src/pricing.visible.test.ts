@@ -25,11 +25,7 @@ describe("applyBulkDiscount (visible)", () => {
 });
 
 describe("cartTotalCents (visible)", () => {
-  it("sums line items when every line is below the promo threshold", () => {
-    const total = cartTotalCents([
-      { ...hoodie, quantity: 1 },
-      { sku: "SOCKS", quantity: 2, unitPriceCents: 1200 },
-    ]);
-    expect(total).toBe(5000 + 2400);
+  it("returns the line total for a single below-threshold item", () => {
+    expect(cartTotalCents([{ ...hoodie, quantity: 1 }])).toBe(5000);
   });
 });
