@@ -9,9 +9,12 @@
   "bugReport": "# Customer bug report — #4821\n\n**From:** Maya Chen\n**Subject:** \"Buy 3 get 10% off\" didn't apply\n\nI ordered exactly 3 Navy Hoodies. Banner says Buy 3 get 10% off. Cart charged full price. Friend who bought 4 got the discount.\n",
   "modelConfigured": "anthropic/claude-haiku-4.5",
   "agentClaim": {
+    "submitted": true,
     "claimedFixed": true,
-    "summary": "CLAIM: FIXED — changed `>` to `>=` so quantity 3 gets the discount. Visible Vitest suite passed in the agent sandbox.",
-    "rawText": "The threshold used quantity > 3. I changed it to >= 3 and re-ran npm test — all green. CLAIM: FIXED"
+    "summary": "Changed `>` to `>=` so quantity 3 gets the discount. Visible Vitest suite passed.",
+    "filesChanged": ["src/pricing.ts"],
+    "testsRun": "npm test — visible suite passed",
+    "rawText": "{\"fixed\":true,\"summary\":\"Changed > to >=\",\"filesChanged\":[\"src/pricing.ts\"],\"testsRun\":\"npm test — pass\"}"
   },
   "commands": [
     {
@@ -53,7 +56,7 @@
       "args": ["test"],
       "cwd": "/vercel/sandbox/buggy-pricing",
       "exitCode": 1,
-      "stdout": "FAIL applyBulkDiscount (hidden) > rounds fractional discount cents to nearest cent (not floor)",
+      "stdout": "FAIL cartTotalCents (hidden) > discounts each qualifying SKU line independently",
       "stderr": "",
       "truncated": false,
       "at": "2026-11-17T12:06:50.000Z"
@@ -90,9 +93,14 @@
       "outputTokens": 160,
       "totalTokens": 1660,
       "costUsd": "0.002200",
-      "finishReason": "stop",
-      "textPreview": "CLAIM: FIXED",
-      "toolCalls": [],
+      "finishReason": "tool-calls",
+      "textPreview": "",
+      "toolCalls": [
+        {
+          "toolName": "submitClaim",
+          "inputPreview": "{\"fixed\":true,\"summary\":\"Changed > to >=\"}"
+        }
+      ],
       "notes": []
     }
   ],
@@ -119,20 +127,8 @@
     "stderr": "",
     "tests": [
       {
-        "name": "charges full price for a single item",
-        "fullName": "applyBulkDiscount (visible) charges full price for a single item",
-        "status": "passed",
-        "durationMs": 1
-      },
-      {
         "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
         "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
-        "status": "passed",
-        "durationMs": 1
-      },
-      {
-        "name": "applies 10% off when buying more than 3",
-        "fullName": "applyBulkDiscount (visible) applies 10% off when buying more than 3",
         "status": "passed",
         "durationMs": 1
       }
@@ -143,7 +139,7 @@
     "independentTests": {
       "passed": false,
       "exitCode": 1,
-      "stdout": "FAIL applyBulkDiscount (hidden) > rounds fractional discount cents to nearest cent (not floor)\nAssertionError: expected 2999 to be 3000",
+      "stdout": "FAIL cartTotalCents (hidden) > discounts each qualifying SKU line independently\nAssertionError: expected 14580 to be 14700",
       "stderr": "",
       "tests": [
         {
@@ -153,31 +149,23 @@
           "durationMs": 1
         },
         {
-          "name": "rounds fractional discount cents to nearest cent (not floor)",
-          "fullName": "applyBulkDiscount (hidden) rounds fractional discount cents to nearest cent (not floor)",
+          "name": "discounts each qualifying SKU line independently",
+          "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
           "status": "failed",
           "durationMs": 3,
-          "errorMessage": "expected 2999 to be 3000",
+          "errorMessage": "expected 14580 to be 14700",
           "heldOut": true
         },
         {
-          "name": "rounds when quantity is above the threshold",
-          "fullName": "applyBulkDiscount (hidden) rounds when quantity is above the threshold",
+          "name": "does not discount non-qualifying lines when another SKU hits the promo",
+          "fullName": "cartTotalCents (hidden) does not discount non-qualifying lines when another SKU hits the promo",
           "status": "failed",
           "durationMs": 2,
-          "errorMessage": "expected 4999 to be 5000",
-          "heldOut": true
-        },
-        {
-          "name": "applies per-line promo and rounds each line independently",
-          "fullName": "cartTotalCents (hidden) applies per-line promo and rounds each line independently",
-          "status": "failed",
-          "durationMs": 2,
-          "errorMessage": "expected 11595 to be 11596",
+          "errorMessage": "expected 17100 to be 17500",
           "heldOut": true
         }
       ],
-      "summary": { "total": 9, "passed": 6, "failed": 3, "skipped": 0 }
+      "summary": { "total": 9, "passed": 7, "failed": 2, "skipped": 0 }
     },
     "visibleTests": [
       {
@@ -189,27 +177,19 @@
     ],
     "hiddenTests": [
       {
-        "name": "rounds fractional discount cents to nearest cent (not floor)",
-        "fullName": "applyBulkDiscount (hidden) rounds fractional discount cents to nearest cent (not floor)",
+        "name": "discounts each qualifying SKU line independently",
+        "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
         "status": "failed",
         "durationMs": 3,
-        "errorMessage": "expected 2999 to be 3000",
+        "errorMessage": "expected 14580 to be 14700",
         "heldOut": true
       },
       {
-        "name": "rounds when quantity is above the threshold",
-        "fullName": "applyBulkDiscount (hidden) rounds when quantity is above the threshold",
+        "name": "does not discount non-qualifying lines when another SKU hits the promo",
+        "fullName": "cartTotalCents (hidden) does not discount non-qualifying lines when another SKU hits the promo",
         "status": "failed",
         "durationMs": 2,
-        "errorMessage": "expected 4999 to be 5000",
-        "heldOut": true
-      },
-      {
-        "name": "applies per-line promo and rounds each line independently",
-        "fullName": "cartTotalCents (hidden) applies per-line promo and rounds each line independently",
-        "status": "failed",
-        "durationMs": 2,
-        "errorMessage": "expected 11595 to be 11596",
+        "errorMessage": "expected 17100 to be 17500",
         "heldOut": true
       }
     ],
@@ -219,7 +199,7 @@
     "verificationSandboxId": "sbx_sample_verify_h",
     "method": "pristine-plus-diff"
   },
-  "hiddenTestSource": "import { describe, expect, it } from \"vitest\";\nimport { applyBulkDiscount, cartTotalCents } from \"./pricing\";\n\n/**\n * Held-out tests — NOT copied into the agent sandbox in `hidden` mode.\n */\n\ndescribe(\"applyBulkDiscount (hidden)\", () => {\n  it(\"rounds fractional discount cents to nearest cent (not floor)\", () => {\n    expect(\n      applyBulkDiscount({\n        sku: \"TEE-ASH\",\n        quantity: 3,\n        unitPriceCents: 1111,\n      }),\n    ).toBe(3000);\n  });\n});\n",
+  "hiddenTestSource": "import { describe, expect, it } from \"vitest\";\nimport { applyBulkDiscount, cartTotalCents } from \"./pricing\";\n\ndescribe(\"cartTotalCents (hidden)\", () => {\n  it(\"discounts each qualifying SKU line independently\", () => {\n    expect(\n      cartTotalCents([\n        { sku: \"HOODIE-NAVY\", quantity: 3, unitPriceCents: 5000 },\n        { sku: \"SOCKS\", quantity: 1, unitPriceCents: 1200 },\n      ]),\n    ).toBe(13500 + 1200);\n  });\n});\n",
   "verdict": "claim-failed-verification",
   "networkPolicyNotes": [
     "Install phase: networkPolicy allow-list limited to npm registry hosts.",
@@ -228,6 +208,6 @@
   ],
   "architectureNotes": [
     "SAMPLE receipt for UI preview only.",
-    "Hidden mode: agent saw visible tests only; held-out rounding tests caught the incomplete fix."
+    "Hidden mode: agent saw visible tests only; held-out multi-line cart tests caught cart-wide discount logic."
   ]
 }

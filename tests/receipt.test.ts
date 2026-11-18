@@ -3,7 +3,11 @@ import { unifiedDiff } from "../src/lib/receipt/diff";
 import { extractLlmSteps } from "../src/lib/receipt/extract-llm-steps";
 import { parseVitestJson } from "../src/lib/receipt/parse-vitest";
 import { decideVerdict, sumLlmTotals } from "../src/lib/receipt/totals";
-import { parseAgentClaim } from "../src/lib/agent/prompts";
+import {
+  claimFromSubmit,
+  emptyClaim,
+  extractSubmitClaim,
+} from "../src/lib/agent/tools";
 import sampleVerified from "../samples/sample-verified.json";
 import sampleHidden from "../samples/sample-hidden.json";
 import type { LlmStepLog, Receipt } from "../src/lib/types";
@@ -195,23 +199,90 @@ describe("sumLlmTotals + extractLlmSteps", () => {
 });
 
 describe("decideVerdict", () => {
-  it("flags claim-failed-verification when claim is true but verify fails", () => {
+  it("maps structured claim + proof to the four demo verdicts", () => {
     expect(
-      decideVerdict({ claimedFixed: true, verified: false }),
+      decideVerdict({
+        claimSubmitted: true,
+        claimedFixed: true,
+        verified: false,
+      }),
     ).toBe("claim-failed-verification");
     expect(
-      decideVerdict({ claimedFixed: true, verified: true }),
+      decideVerdict({
+        claimSubmitted: true,
+        claimedFixed: true,
+        verified: true,
+      }),
     ).toBe("verified");
     expect(
-      decideVerdict({ claimedFixed: false, verified: false }),
+      decideVerdict({
+        claimSubmitted: true,
+        claimedFixed: false,
+        verified: false,
+      }),
     ).toBe("not-fixed");
+    expect(
+      decideVerdict({
+        claimSubmitted: true,
+        claimedFixed: false,
+        verified: true,
+      }),
+    ).toBe("not-fixed");
+    expect(
+      decideVerdict({
+        claimSubmitted: false,
+        claimedFixed: null,
+        verified: true,
+      }),
+    ).toBe("no-claim");
   });
 });
 
-describe("parseAgentClaim", () => {
-  it("detects CLAIM: FIXED marker", () => {
-    expect(parseAgentClaim("All good.\nCLAIM: FIXED").claimedFixed).toBe(true);
-    expect(parseAgentClaim("Still broken").claimedFixed).toBe(false);
+describe("submitClaim extraction", () => {
+  it("returns no-claim when submitClaim was never called", () => {
+    const claim = extractSubmitClaim([
+      { text: "Now let's run the tests again to verify the fix:", toolCalls: [] },
+    ]);
+    expect(claim.submitted).toBe(false);
+    expect(claim.claimedFixed).toBeNull();
+    expect(claim.summary).toBe("No claim submitted");
+  });
+
+  it("reads structured submitClaim tool input", () => {
+    const claim = extractSubmitClaim([
+      {
+        toolCalls: [
+          {
+            toolName: "submitClaim",
+            input: {
+              fixed: true,
+              summary: "Changed > to >=",
+              filesChanged: ["src/pricing.ts"],
+              testsRun: "npm test — pass",
+            },
+          },
+        ],
+      },
+    ]);
+    expect(claim.submitted).toBe(true);
+    expect(claim.claimedFixed).toBe(true);
+    expect(claim.summary).toContain(">");
+    expect(claim.filesChanged).toEqual(["src/pricing.ts"]);
+  });
+
+  it("claimFromSubmit sets submitted", () => {
+    const c = claimFromSubmit({
+      fixed: false,
+      summary: "still broken",
+      filesChanged: [],
+      testsRun: "failing",
+    });
+    expect(c).toMatchObject({
+      submitted: true,
+      claimedFixed: false,
+      summary: "still broken",
+    });
+    expect(emptyClaim().submitted).toBe(false);
   });
 });
 
@@ -229,6 +300,8 @@ describe("sample receipts", () => {
     expect(r.isSample).toBe(true);
     expect(r.verdict).toBe("verified");
     expect(r.verification.verified).toBe(true);
+    expect(r.agentClaim.submitted).toBe(true);
+    expect(r.agentClaim.claimedFixed).toBe(true);
   });
 
   it("sample-hidden flags claim-failed-verification with held-out failures", () => {
@@ -236,13 +309,14 @@ describe("sample receipts", () => {
     expect(r.isSample).toBe(true);
     expect(r.mode).toBe("hidden");
     expect(r.verdict).toBe("claim-failed-verification");
+    expect(r.agentClaim.submitted).toBe(true);
     expect(r.agentClaim.claimedFixed).toBe(true);
     expect(r.verification.verified).toBe(false);
     expect(r.verification.method).toBe("pristine-plus-diff");
     expect(r.verification.hiddenTests.some((t) => t.status === "failed")).toBe(
       true,
     );
-    expect(r.hiddenTestSource).toContain("applyBulkDiscount (hidden)");
+    expect(r.hiddenTestSource).toContain("cartTotalCents (hidden)");
   });
 });
 
@@ -251,5 +325,18 @@ describe("hidden harness naming", () => {
     const { TRUSTED_HARNESS_FILES } = await import("../src/lib/sandbox/harness");
     expect(TRUSTED_HARNESS_FILES).toContain("src/pricing.visible.test.ts");
     expect(TRUSTED_HARNESS_FILES).toContain("src/pricing.hidden.test.ts");
+  });
+});
+
+describe("fixture source does not label bugs", () => {
+  it("pricing.ts has no BUG annotations", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(
+      new URL("../fixtures/buggy-pricing/src/pricing.ts", import.meta.url),
+      "utf8",
+    );
+    expect(src).not.toMatch(/BUG\s*\d/i);
+    expect(src).not.toMatch(/instead of/i);
+    expect(src).not.toMatch(/off-by-one/i);
   });
 });

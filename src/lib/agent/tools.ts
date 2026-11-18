@@ -2,9 +2,72 @@ import { tool } from "ai";
 import type { Sandbox } from "@vercel/sandbox";
 import { z } from "zod";
 import { FIXTURE_DIRNAME } from "../config";
-import type { CommandLog } from "../types";
+import type { AgentClaim, CommandLog } from "../types";
 import { runLogged } from "../sandbox/commands";
 import { isAllowedWritePath, normalizeSandboxPath } from "../sandbox/harness";
+
+export const submitClaimInputSchema = z.object({
+  fixed: z
+    .boolean()
+    .describe("true if you believe the bug is fixed and workspace tests pass"),
+  summary: z.string().describe("Short explanation of what you changed"),
+  filesChanged: z
+    .array(z.string())
+    .describe("Paths you edited (relative to the fixture)"),
+  testsRun: z
+    .string()
+    .describe("Which tests you ran and whether they passed"),
+});
+
+export type SubmitClaimInput = z.infer<typeof submitClaimInputSchema>;
+
+export type ClaimBox = { current: AgentClaim | null };
+
+export function emptyClaim(rawText = ""): AgentClaim {
+  return {
+    submitted: false,
+    claimedFixed: null,
+    summary: "No claim submitted",
+    filesChanged: [],
+    testsRun: "",
+    rawText,
+  };
+}
+
+export function claimFromSubmit(input: SubmitClaimInput): AgentClaim {
+  return {
+    submitted: true,
+    claimedFixed: input.fixed,
+    summary: input.summary,
+    filesChanged: input.filesChanged,
+    testsRun: input.testsRun,
+    rawText: JSON.stringify(input),
+  };
+}
+
+/**
+ * Pull the structured claim from agent steps (last submitClaim wins).
+ */
+export function extractSubmitClaim(steps: unknown, rawText = ""): AgentClaim {
+  if (!Array.isArray(steps)) return emptyClaim(rawText);
+
+  let found: AgentClaim | null = null;
+  for (const raw of steps) {
+    const step = (raw ?? {}) as {
+      toolCalls?: Array<{ toolName?: string; input?: unknown }>;
+    };
+    for (const tc of step.toolCalls ?? []) {
+      if (tc.toolName !== "submitClaim") continue;
+      const parsed = submitClaimInputSchema.safeParse(tc.input);
+      if (parsed.success) {
+        found = claimFromSubmit(parsed.data);
+      }
+    }
+  }
+
+  if (!found) return emptyClaim(rawText);
+  return { ...found, rawText: found.rawText || rawText };
+}
 
 /**
  * Agent tools that operate on a Vercel Sandbox from the host process.
@@ -14,9 +77,9 @@ import { isAllowedWritePath, normalizeSandboxPath } from "../sandbox/harness";
 export function createSandboxTools(
   sandbox: Sandbox,
   commandLog: CommandLog[],
-  opts: { sandboxRoot: string; fixtureRoot: string },
+  opts: { sandboxRoot: string; fixtureRoot: string; claimBox?: ClaimBox },
 ) {
-  const { sandboxRoot, fixtureRoot } = opts;
+  const { sandboxRoot, fixtureRoot, claimBox } = opts;
 
   return {
     runCommand: tool({
@@ -92,6 +155,22 @@ export function createSandboxTools(
           { path: target, content: Buffer.from(content, "utf8") },
         ]);
         return { ok: true as const, path: target, bytes: content.length };
+      },
+    }),
+
+    submitClaim: tool({
+      description:
+        "Submit your final structured claim and end the run. Call exactly once when finished.",
+      inputSchema: submitClaimInputSchema,
+      execute: async (input) => {
+        if (claimBox) {
+          claimBox.current = claimFromSubmit(input);
+        }
+        return {
+          ok: true as const,
+          message: "Claim recorded. The run will stop.",
+          claim: input,
+        };
       },
     }),
   };

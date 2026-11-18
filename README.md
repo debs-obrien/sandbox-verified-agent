@@ -55,15 +55,17 @@ flowchart LR
 
 ## The fixture
 
-`fixtures/buggy-pricing/` has **two** intentional bugs:
+`fixtures/buggy-pricing/` has **two** intentional bugs (no bug-labelling comments in source):
 
-1. **Threshold:** `>` instead of `>=` — quantity `3` never discounts (customer report).
-2. **Rounding:** `Math.floor` instead of `Math.round` — fractional discount cents truncate.
+1. **Threshold (customer report):** `applyBulkDiscount` uses `>` instead of `>=` — quantity `3` never discounts.
+2. **Cart aggregation (held-out):** `cartTotalCents` applies the promo from **cart-wide** quantity instead of per-SKU via `applyBulkDiscount`. Looks like a plausible alternate reading of “buy 3 get 10% off” when you only read the function; mixed multi-line carts diverge from per-line semantics.
+
+Why not keep `Math.floor` as the second bug? Live runs showed labelled comments (and even an unmarked `Math.floor` next to “nearest cent” copy) let the model fix rounding without seeing hidden tests. Cart-wide vs per-line is a separate function the visible suite never stresses.
 
 | Suite | File | Role |
 | --- | --- | --- |
-| Visible | `src/pricing.visible.test.ts` | Customer-shaped cases (exact-cent prices). A natural `>=` fix turns these green. |
-| Hidden | `src/pricing.hidden.test.ts` | Rounding, boundaries, multi-line cart. Held out from the agent in **hidden** mode. |
+| Visible | `src/pricing.visible.test.ts` | Quantity-boundary cases only. A natural `>=` fix turns these green. |
+| Hidden | `src/pricing.hidden.test.ts` | Multi-line / per-SKU cart cases. Held out from the agent in **hidden** mode. |
 
 Unit tests only — no Playwright.
 
@@ -71,16 +73,16 @@ Unit tests only — no Playwright.
 
 | Mode | What the agent sees | What verification runs | Typical verdict |
 | --- | --- | --- | --- |
-| **normal** | Visible + hidden tests | Pristine fixture + agent `pricing.ts` + full suite | `verified` when the real fix lands |
-| **hidden** | Visible tests only | Same independent check **including** held-out tests | Agent honestly claims `CLAIM: FIXED` after visible green; hidden tests → `claim-failed-verification` |
+| **normal** | Visible + hidden tests | Pristine fixture + agent `pricing.ts` + full suite | `verified` when threshold **and** per-line cart are fixed |
+| **hidden** | Visible tests only | Same independent check **including** held-out tests | Agent honestly `submitClaim({fixed:true})` after visible green; held-out cart tests → `claim-failed-verification` |
 
-The agent is **not** prompted to fail. Same honest instructions in both modes. Hidden mode only changes which test files are copied into the agent sandbox.
+The agent is **not** prompted to fail. Same honest instructions in both modes. Hidden mode only changes which test files are copied into the agent sandbox. Claims are structured via required `submitClaim` (not a text token).
 
 ## Demo script (talk track)
 
-1. **Normal run (green)** — click **Run normal** or `POST /api/run` with `{"mode":"normal"}`. Agent sees the full suite, fixes threshold + rounding, independent verify passes → receipt badge **Verified**.
-2. **Hidden-tests run (red)** — click **Run hidden-tests demo** or `POST /api/run` with `{"mode":"hidden"}`. Agent only sees visible tests, applies the natural `>=` fix, claims fixed. Fresh sandbox re-runs with held-out tests → badge **Caught: claim not supported**.
-3. **Open the receipt** — `/receipt/<id>` (UI) and `/api/receipt/<id>` (JSON). Side-by-side: what the agent said vs what the sandbox proved; after verification, held-out source is revealed.
+1. **Normal run (green)** — click **Run normal** or `POST /api/run` with `{"mode":"normal"}`. Agent sees the full suite, fixes threshold + per-line cart, calls `submitClaim({fixed:true})`, independent verify passes → badge **Verified**.
+2. **Hidden-tests run (red)** — click **Run hidden-tests demo** or `POST /api/run` with `{"mode":"hidden"}`. Agent only sees visible tests, applies the natural `>=` fix, submits fixed=true. Fresh sandbox re-runs with held-out multi-line cart tests → badge **Caught: claim not supported**.
+3. **Open the receipt** — `/receipt/<id>` (UI) and `/api/receipt/<id>` (JSON). Side-by-side claim vs proof; after verification, held-out source is revealed.
 
 Sample receipts (offline): `/receipt/sample-verified`, `/receipt/sample-hidden`.
 
@@ -209,8 +211,8 @@ Function duration: `/api/run` sets `maxDuration = 300` (Hobby cap). Sandbox sess
 
 ## Receipt fields
 
-- Big verdict badge: **Verified** / **Caught: claim not supported** / **Not fixed**
-- Side-by-side: agent claim + files changed + tests it ran vs fresh sandbox id + visible/hidden results + failing output
+- Big verdict badge: **Verified** / **Caught: claim not supported** / **Not fixed** / **No claim submitted**
+- Side-by-side: structured `submitClaim` + files changed + tests it ran vs fresh sandbox id + visible/hidden results + failing output
 - Steps, tokens, cost, model, duration, and the diff
 - After hidden-mode verification: held-out test source reveal
 - **Download JSON** of the same payload (`/api/receipt/<id>`)

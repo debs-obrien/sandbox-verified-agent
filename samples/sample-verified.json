@@ -9,9 +9,12 @@
   "bugReport": "# Customer bug report — #4821\n\n**From:** Maya Chen\n**Subject:** \"Buy 3 get 10% off\" didn't apply\n\nI ordered exactly 3 Navy Hoodies. Banner says Buy 3 get 10% off. Cart charged full price. Friend who bought 4 got the discount.\n",
   "modelConfigured": "anthropic/claude-haiku-4.5",
   "agentClaim": {
+    "submitted": true,
     "claimedFixed": true,
-    "summary": "CLAIM: FIXED — changed the bulk-discount threshold from `>` to `>=` and Math.floor to Math.round so quantity 3 qualifies and fractional cents round correctly. All Vitest tests passed.",
-    "rawText": "Fixed threshold to >= 3 and rounding to Math.round. Re-ran npm test. CLAIM: FIXED"
+    "summary": "Changed the bulk-discount threshold from `>` to `>=` and made cartTotalCents sum per-line discounts via applyBulkDiscount.",
+    "filesChanged": ["src/pricing.ts"],
+    "testsRun": "npm test — all visible + hidden tests passed",
+    "rawText": "{\"fixed\":true,\"summary\":\"Changed threshold and cart aggregation\",\"filesChanged\":[\"src/pricing.ts\"],\"testsRun\":\"npm test — pass\"}"
   },
   "commands": [
     {
@@ -90,9 +93,14 @@
       "outputTokens": 220,
       "totalTokens": 1820,
       "costUsd": "0.002800",
-      "finishReason": "stop",
-      "textPreview": "CLAIM: FIXED",
-      "toolCalls": [],
+      "finishReason": "tool-calls",
+      "textPreview": "",
+      "toolCalls": [
+        {
+          "toolName": "submitClaim",
+          "inputPreview": "{\"fixed\":true,\"summary\":\"Changed threshold and cart aggregation\"}"
+        }
+      ],
       "notes": []
     }
   ],
@@ -107,9 +115,9 @@
   "diffs": [
     {
       "path": "src/pricing.ts",
-      "before": "if (item.quantity > 3) {\n    return Math.floor(subtotal * 0.9);",
-      "after": "if (item.quantity >= 3) {\n    return Math.round(subtotal * 0.9);",
-      "unifiedDiff": "--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@\n-if (item.quantity > 3) {\n-    return Math.floor(subtotal * 0.9);\n+if (item.quantity >= 3) {\n+    return Math.round(subtotal * 0.9);\n"
+      "before": "if (item.quantity > 3) {\n…\nif (totalQuantity > 3) {",
+      "after": "if (item.quantity >= 3) {\n…\nreturn items.reduce((sum, item) => sum + applyBulkDiscount(item), 0);",
+      "unifiedDiff": "--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@\n-if (item.quantity > 3) {\n+if (item.quantity >= 3) {\n@@\n-if (totalQuantity > 3) {\n-  return Math.round(subtotal * 0.9);\n-}\n-return subtotal;\n+return items.reduce((sum, item) => sum + applyBulkDiscount(item), 0);\n"
     }
   ],
   "agentTests": {
@@ -125,8 +133,8 @@
         "durationMs": 1
       },
       {
-        "name": "rounds fractional discount cents to nearest cent (not floor)",
-        "fullName": "applyBulkDiscount (hidden) rounds fractional discount cents to nearest cent (not floor)",
+        "name": "discounts each qualifying SKU line independently",
+        "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
         "status": "passed",
         "durationMs": 1,
         "heldOut": true
@@ -142,20 +150,14 @@
       "stderr": "",
       "tests": [
         {
-          "name": "charges full price for a single item",
-          "fullName": "applyBulkDiscount (visible) charges full price for a single item",
-          "status": "passed",
-          "durationMs": 2
-        },
-        {
           "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
           "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
           "status": "passed",
           "durationMs": 1
         },
         {
-          "name": "rounds fractional discount cents to nearest cent (not floor)",
-          "fullName": "applyBulkDiscount (hidden) rounds fractional discount cents to nearest cent (not floor)",
+          "name": "discounts each qualifying SKU line independently",
+          "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
           "status": "passed",
           "durationMs": 1,
           "heldOut": true
@@ -165,12 +167,6 @@
     },
     "visibleTests": [
       {
-        "name": "charges full price for a single item",
-        "fullName": "applyBulkDiscount (visible) charges full price for a single item",
-        "status": "passed",
-        "durationMs": 2
-      },
-      {
         "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
         "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
         "status": "passed",
@@ -179,8 +175,8 @@
     ],
     "hiddenTests": [
       {
-        "name": "rounds fractional discount cents to nearest cent (not floor)",
-        "fullName": "applyBulkDiscount (hidden) rounds fractional discount cents to nearest cent (not floor)",
+        "name": "discounts each qualifying SKU line independently",
+        "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
         "status": "passed",
         "durationMs": 1,
         "heldOut": true

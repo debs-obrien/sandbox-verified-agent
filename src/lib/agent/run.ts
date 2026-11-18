@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { ToolLoopAgent, isStepCount } from "ai";
+import { ToolLoopAgent, hasToolCall, isStepCount } from "ai";
 import { resolveAuthStatus } from "../auth";
 import { DEFAULT_MODEL, FIXTURE_DIRNAME, NORMAL_MAX_STEPS } from "../config";
 import { unifiedDiff } from "../receipt/diff";
@@ -22,18 +22,20 @@ import {
   UNAVAILABLE,
 } from "../sandbox/verify";
 import type {
+  AgentClaim,
   CommandLog,
   DemoMode,
   FileDiff,
   Receipt,
   VerificationResult,
 } from "../types";
-import { createSandboxTools } from "./tools";
 import {
-  instructionsFor,
-  parseAgentClaim,
-  userPromptFor,
-} from "./prompts";
+  createSandboxTools,
+  emptyClaim,
+  extractSubmitClaim,
+  type ClaimBox,
+} from "./tools";
+import { instructionsFor, userPromptFor } from "./prompts";
 
 const TRACKED_RELATIVE = [`${FIXTURE_DIRNAME}/src/pricing.ts`];
 
@@ -70,6 +72,13 @@ async function readSandboxText(
   return buf?.toString("utf8") ?? "";
 }
 
+function abortClaim(summary: string): AgentClaim {
+  return {
+    ...emptyClaim(),
+    summary,
+  };
+}
+
 export async function runVerifiedAgent(options: {
   mode: DemoMode;
   model?: string;
@@ -99,11 +108,7 @@ export async function runVerifiedAgent(options: {
       isSample: false,
       bugReport,
       modelConfigured: model,
-      agentClaim: {
-        claimedFixed: false,
-        summary: "Run aborted: missing credentials.",
-        rawText: "",
-      },
+      agentClaim: abortClaim("Run aborted: missing credentials."),
       commands: [],
       llmSteps: [],
       totals: sumLlmTotals([]),
@@ -158,16 +163,18 @@ export async function runVerifiedAgent(options: {
     );
 
     const maxSteps = NORMAL_MAX_STEPS;
+    const claimBox: ClaimBox = { current: null };
     const tools = createSandboxTools(agentSandbox, commandLog, {
       sandboxRoot,
       fixtureRoot,
+      claimBox,
     });
 
     const agent = new ToolLoopAgent({
       model,
       instructions: instructionsFor(mode, fixtureRoot),
       tools,
-      stopWhen: isStepCount(maxSteps),
+      stopWhen: [hasToolCall("submitClaim"), isStepCount(maxSteps)],
       toolChoice: "auto",
     });
 
@@ -176,7 +183,9 @@ export async function runVerifiedAgent(options: {
     });
 
     const llmSteps = extractLlmSteps(result.steps);
-    const claim = parseAgentClaim(result.text ?? "");
+    const claim =
+      claimBox.current ??
+      extractSubmitClaim(result.steps, result.text ?? "");
 
     const diffs: FileDiff[] = [];
     for (const f of TRACKED_RELATIVE) {
@@ -210,6 +219,7 @@ export async function runVerifiedAgent(options: {
     const verify = await independentVerify(agentPricing, commandLog);
     const verified = verify.tests.passed === true;
     const verdict = decideVerdict({
+      claimSubmitted: claim.submitted,
       claimedFixed: claim.claimedFixed,
       verified,
     });
@@ -224,11 +234,7 @@ export async function runVerifiedAgent(options: {
       isSample: false,
       bugReport,
       modelConfigured: model,
-      agentClaim: {
-        claimedFixed: claim.claimedFixed,
-        summary: claim.summary,
-        rawText: result.text ?? "",
-      },
+      agentClaim: claim,
       commands: commandLog,
       llmSteps,
       totals: sumLlmTotals(llmSteps),
@@ -267,11 +273,7 @@ export async function runVerifiedAgent(options: {
       isSample: false,
       bugReport,
       modelConfigured: model,
-      agentClaim: {
-        claimedFixed: false,
-        summary: "Run failed with an error.",
-        rawText: "",
-      },
+      agentClaim: abortClaim("Run failed with an error."),
       commands: commandLog,
       llmSteps: [],
       totals: sumLlmTotals([]),
@@ -298,14 +300,15 @@ function architectureNotes(
       : "Fixture workspace created under the sandbox cwd (mkdir -p).",
     "LLM (AI SDK ToolLoopAgent) runs on the Next.js host via AI Gateway — not inside the sandbox.",
     "Auth: getVercelOidcToken() (x-vercel-oidc-token header on Vercel, VERCEL_OIDC_TOKEN locally) or AI_GATEWAY_API_KEY / token trio.",
-    "Sandbox tools: runCommand, readFile, writeFile (writeFile allowlisted to src/pricing.ts only).",
+    "Sandbox tools: runCommand, readFile, writeFile, submitClaim (writeFile allowlisted to src/pricing.ts only).",
+    "Final claim is structured via submitClaim (fixed, summary, filesChanged, testsRun); stopWhen=hasToolCall(submitClaim).",
     "Verification: pristine fixture copy (including held-out *.hidden.test.ts) + agent's pricing.ts only, in a fresh sandbox the agent never touched.",
     "Snapshot expiration: 1 day (Sandbox API rejects values between 0 and 1 day exclusive).",
     mode === "hidden"
-      ? "Hidden mode: agent sandbox omits *.hidden.test.ts. Agent may honestly pass visible tests with an incomplete fix; held-out tests catch it."
-      : "Normal mode: agent sees the full suite (visible + hidden). A real fix must satisfy both.",
+      ? "Hidden mode: agent sandbox omits *.hidden.test.ts. A natural threshold-only fix can pass visible tests; held-out multi-line cart tests catch cart-wide discount logic."
+      : "Normal mode: agent sees the full suite (visible + hidden). Fixing threshold + per-line cart semantics makes independent verify green.",
     mode
-      ? `Mode=${mode}; stopWhen=isStepCount(${maxSteps ?? "?"}).`
+      ? `Mode=${mode}; stopWhen=[hasToolCall(submitClaim), isStepCount(${maxSteps ?? "?"})].`
       : "Mode unset.",
     "Held-out tests are standard practice (similar to SWE-bench). The independent check runs in a sandbox the agent cannot edit.",
   ];

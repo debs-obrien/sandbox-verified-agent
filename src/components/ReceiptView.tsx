@@ -57,6 +57,9 @@ function verdictCopy(receipt: Receipt): { tone: "pass" | "fail" | "warn" | "neut
   if (receipt.verdict === "claim-failed-verification") {
     return { tone: "fail", label: "Caught: claim not supported" };
   }
+  if (receipt.verdict === "no-claim") {
+    return { tone: "warn", label: "No claim submitted" };
+  }
   if (receipt.verdict === "error") {
     return { tone: "warn", label: "Run error" };
   }
@@ -185,22 +188,39 @@ export function ReceiptView({ receipt }: { receipt: Receipt }) {
             <h3 className="font-[family-name:var(--font-display)] text-xl text-[var(--ink)]">
               What the agent said
             </h3>
-            <Badge tone={receipt.agentClaim.claimedFixed ? "warn" : "neutral"}>
-              {receipt.agentClaim.claimedFixed
-                ? "CLAIM: FIXED"
-                : "Did not claim fixed"}
-            </Badge>
+            {!receipt.agentClaim.submitted ? (
+              <Badge tone="warn">No claim submitted</Badge>
+            ) : (
+              <Badge
+                tone={receipt.agentClaim.claimedFixed ? "warn" : "neutral"}
+              >
+                {receipt.agentClaim.claimedFixed
+                  ? "submitClaim: fixed=true"
+                  : "submitClaim: fixed=false"}
+              </Badge>
+            )}
             <p className="text-[15px] leading-relaxed text-[var(--ink)]">
               {receipt.agentClaim.summary}
             </p>
+            {receipt.agentClaim.submitted && receipt.agentClaim.testsRun && (
+              <p className="text-sm text-[var(--muted)]">
+                Agent reported tests: {receipt.agentClaim.testsRun}
+              </p>
+            )}
             <div>
               <p className="text-sm text-[var(--muted)] mb-2">Files changed</p>
-              {receipt.diffs.length === 0 ? (
+              {(receipt.agentClaim.filesChanged?.length
+                ? receipt.agentClaim.filesChanged
+                : receipt.diffs.map((d) => d.path)
+              ).length === 0 ? (
                 <p className="text-sm text-[var(--muted)]">None</p>
               ) : (
                 <ul className="font-mono text-sm space-y-1">
-                  {receipt.diffs.map((d) => (
-                    <li key={d.path}>{d.path}</li>
+                  {(receipt.agentClaim.filesChanged?.length
+                    ? receipt.agentClaim.filesChanged
+                    : receipt.diffs.map((d) => d.path)
+                  ).map((p) => (
+                    <li key={p}>{p}</li>
                   ))}
                 </ul>
               )}

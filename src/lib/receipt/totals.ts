@@ -1,4 +1,9 @@
-import type { LlmStepLog, ReceiptTotals, Unavailable } from "../types";
+import type {
+  LlmStepLog,
+  ReceiptTotals,
+  Unavailable,
+  Verdict,
+} from "../types";
 
 const UNAVAILABLE: Unavailable = "unavailable";
 
@@ -67,12 +72,21 @@ export function sumLlmTotals(steps: LlmStepLog[]): ReceiptTotals {
   };
 }
 
+/**
+ * Verdict from structured claim + independent proof.
+ * - claimed fixed + green → verified
+ * - claimed fixed + red → caught (claim-failed-verification)
+ * - claimed not fixed → not-fixed (honest)
+ * - no submitClaim → no-claim
+ */
 export function decideVerdict(args: {
-  claimedFixed: boolean;
+  claimSubmitted: boolean;
+  claimedFixed: boolean | null;
   verified: boolean;
   errored?: boolean;
-}): "verified" | "claim-failed-verification" | "not-fixed" | "error" {
+}): Verdict {
   if (args.errored) return "error";
+  if (!args.claimSubmitted || args.claimedFixed === null) return "no-claim";
   if (args.claimedFixed && args.verified) return "verified";
   if (args.claimedFixed && !args.verified) return "claim-failed-verification";
   return "not-fixed";

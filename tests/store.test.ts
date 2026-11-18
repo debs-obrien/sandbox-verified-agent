@@ -21,7 +21,14 @@ function sampleReceipt(id: string): Receipt {
     isSample: false,
     bugReport: "bug",
     modelConfigured: "anthropic/claude-haiku-4.5",
-    agentClaim: { claimedFixed: true, summary: "ok", rawText: "CLAIM: FIXED" },
+    agentClaim: {
+      submitted: true,
+      claimedFixed: true,
+      summary: "ok",
+      filesChanged: ["src/pricing.ts"],
+      testsRun: "npm test — pass",
+      rawText: "{\"fixed\":true}",
+    },
     commands: [],
     llmSteps: [],
     totals: {

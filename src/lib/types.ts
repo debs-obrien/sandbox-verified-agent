@@ -57,9 +57,15 @@ export type TestSuiteResult = {
   };
 };
 
+/** Structured claim from the required `submitClaim` tool. */
 export type AgentClaim = {
-  claimedFixed: boolean;
+  /** False when the agent never called submitClaim. */
+  submitted: boolean;
+  /** Null when no claim was submitted. */
+  claimedFixed: boolean | null;
   summary: string;
+  filesChanged: string[];
+  testsRun: string;
   rawText: string;
 };
 
@@ -92,6 +98,13 @@ export type ReceiptTotals = {
   stepsMissingCost: number;
 };
 
+export type Verdict =
+  | "verified"
+  | "claim-failed-verification"
+  | "not-fixed"
+  | "no-claim"
+  | "error";
+
 export type Receipt = {
   id: string;
   createdAt: string;
@@ -111,11 +124,7 @@ export type Receipt = {
   verification: VerificationResult;
   /** Revealed after verification in hidden mode — source of held-out tests. */
   hiddenTestSource?: string;
-  verdict:
-    | "verified"
-    | "claim-failed-verification"
-    | "not-fixed"
-    | "error";
+  verdict: Verdict;
   errorMessage?: string;
   networkPolicyNotes: string[];
   architectureNotes: string[];

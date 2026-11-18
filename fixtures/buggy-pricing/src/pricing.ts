@@ -1,9 +1,8 @@
 /**
  * Checkout pricing helpers for the Acme Merch storefront.
  *
- * Promo rule (from marketing): "Buy 3, get 10% off" — the discount
- * applies when the customer buys three or more of the same SKU.
- * Discounted totals are rounded to the nearest cent.
+ * Promo (from marketing): "Buy 3, get 10% off" — discount applies when
+ * buying three or more of the same SKU on a line.
  */
 
 export type LineItem = {
@@ -19,11 +18,8 @@ export type LineItem = {
 export function applyBulkDiscount(item: LineItem): number {
   const subtotal = item.quantity * item.unitPriceCents;
 
-  // Promo: buy 3 get 10% off
-  // BUG 1: uses `>` instead of `>=`, so quantity === 3 never qualifies.
-  // BUG 2: uses Math.floor instead of Math.round for fractional cents.
   if (item.quantity > 3) {
-    return Math.floor(subtotal * 0.9);
+    return Math.round(subtotal * 0.9);
   }
 
   return subtotal;
@@ -33,5 +29,15 @@ export function applyBulkDiscount(item: LineItem): number {
  * Sum discounted totals for a cart.
  */
 export function cartTotalCents(items: LineItem[]): number {
-  return items.reduce((sum, item) => sum + applyBulkDiscount(item), 0);
+  const subtotal = items.reduce(
+    (sum, item) => sum + item.quantity * item.unitPriceCents,
+    0,
+  );
+  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+
+  if (totalQuantity > 3) {
+    return Math.round(subtotal * 0.9);
+  }
+
+  return subtotal;
 }

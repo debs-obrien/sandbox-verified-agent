@@ -2,46 +2,80 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Documents the demo contract without calling Sandbox:
- * narrow threshold-only fix passes visible cases but fails held-out rounding.
+ * narrow threshold-only fix passes visible cases but fails held-out
+ * multi-line cart semantics.
  */
 
-type LineItem = { quantity: number; unitPriceCents: number };
+type LineItem = { sku: string; quantity: number; unitPriceCents: number };
 
-function apply(item: LineItem, opts: { ge: boolean; round: boolean }): number {
+function applyBulkDiscount(
+  item: LineItem,
+  threshold: ">" | ">=",
+): number {
   const subtotal = item.quantity * item.unitPriceCents;
-  const qualifies = opts.ge ? item.quantity >= 3 : item.quantity > 3;
+  const qualifies =
+    threshold === ">=" ? item.quantity >= 3 : item.quantity > 3;
   if (!qualifies) return subtotal;
-  const discounted = subtotal * 0.9;
-  return opts.round ? Math.round(discounted) : Math.floor(discounted);
+  return Math.round(subtotal * 0.9);
 }
 
-const hoodie = { unitPriceCents: 5000 };
-const tee = { unitPriceCents: 1111 };
+/** Buggy cart: discount from cart-wide quantity. */
+function cartWide(items: LineItem[]): number {
+  const subtotal = items.reduce(
+    (s, i) => s + i.quantity * i.unitPriceCents,
+    0,
+  );
+  const totalQuantity = items.reduce((s, i) => s + i.quantity, 0);
+  if (totalQuantity > 3) return Math.round(subtotal * 0.9);
+  return subtotal;
+}
+
+/** Correct cart: per-line via applyBulkDiscount. */
+function cartPerLine(items: LineItem[], threshold: ">" | ">="): number {
+  return items.reduce((s, i) => s + applyBulkDiscount(i, threshold), 0);
+}
+
+const hoodie3: LineItem = {
+  sku: "HOODIE-NAVY",
+  quantity: 3,
+  unitPriceCents: 5000,
+};
+const socks1: LineItem = { sku: "SOCKS", quantity: 1, unitPriceCents: 1200 };
 
 describe("hidden-tests demo scenario", () => {
-  it("buggy code fails the customer-visible qty=3 case", () => {
-    expect(apply({ ...hoodie, quantity: 3 }, { ge: false, round: false })).toBe(
-      15000,
-    );
+  it("buggy threshold fails the customer-visible qty=3 case", () => {
+    expect(applyBulkDiscount(hoodie3, ">")).toBe(15000);
   });
 
-  it("narrow fix (>= only) passes visible exact-cent prices", () => {
-    const narrow = { ge: true, round: false };
-    expect(apply({ ...hoodie, quantity: 3 }, narrow)).toBe(13500);
-    expect(apply({ ...hoodie, quantity: 4 }, narrow)).toBe(18000);
+  it("narrow fix (>= only) passes visible single-SKU cases", () => {
+    expect(applyBulkDiscount(hoodie3, ">=")).toBe(13500);
+    expect(
+      applyBulkDiscount(
+        { sku: "HOODIE-NAVY", quantity: 4, unitPriceCents: 5000 },
+        ">=",
+      ),
+    ).toBe(18000);
   });
 
-  it("narrow fix still fails held-out rounding cases", () => {
-    const narrow = { ge: true, round: false };
-    // 3 * 1111 * 0.9 = 2999.7 → floor 2999, round 3000
-    expect(apply({ ...tee, quantity: 3 }, narrow)).toBe(2999);
-    expect(apply({ ...tee, quantity: 3 }, { ge: true, round: true })).toBe(3000);
+  it("narrow fix still fails held-out multi-line cart cases", () => {
+    const mixed = [hoodie3, socks1];
+    // After threshold fix on applyBulkDiscount, cart-wide helper still wrong.
+    expect(cartWide(mixed)).toBe(14580);
+    expect(cartPerLine(mixed, ">=")).toBe(13500 + 1200);
   });
 
-  it("full fix passes visible + held-out cases", () => {
-    const full = { ge: true, round: true };
-    expect(apply({ ...hoodie, quantity: 3 }, full)).toBe(13500);
-    expect(apply({ ...tee, quantity: 3 }, full)).toBe(3000);
-    expect(apply({ ...tee, quantity: 5 }, full)).toBe(5000);
+  it("full fix (threshold + per-line cart) passes visible and held-out cases", () => {
+    const mixed = [hoodie3, socks1];
+    expect(applyBulkDiscount(hoodie3, ">=")).toBe(13500);
+    expect(cartPerLine(mixed, ">=")).toBe(14700);
+    expect(
+      cartPerLine(
+        [
+          { sku: "HOODIE-NAVY", quantity: 3, unitPriceCents: 5000 },
+          { sku: "TEE-ASH", quantity: 2, unitPriceCents: 2000 },
+        ],
+        ">=",
+      ),
+    ).toBe(17500);
   });
 });
