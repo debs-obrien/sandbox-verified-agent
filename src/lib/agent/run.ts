@@ -7,14 +7,26 @@ import {
   hasToolCall,
   isStepCount,
 } from "ai";
+import type { Sandbox } from "@vercel/sandbox";
 import { resolveAuthStatus } from "../auth";
 import { DEFAULT_MODEL, FIXTURE_DIRNAME, NORMAL_MAX_STEPS } from "../config";
 import { unifiedDiff } from "../receipt/diff";
+import {
+  buildEvidencePack,
+  evidencePackMetaFailed,
+  evidencePackMetaFromWritten,
+  withUpdatedCleanupLog,
+} from "../receipt/evidence";
 import { extractLlmSteps } from "../receipt/extract-llm-steps";
-import { saveReceipt } from "../receipt/store";
+import { saveEvidencePack, saveReceipt } from "../receipt/store";
 import { decideVerdict, sumLlmTotals } from "../receipt/totals";
 import { disposeSandboxQuietly } from "../sandbox/cleanup";
 import { resetCommandCounter } from "../sandbox/commands";
+import {
+  cleanupAfterEvidence,
+  listSandboxSnapshotsQuietly,
+  type ObservedSnapshot,
+} from "../sandbox/evidence-cleanup";
 import { NETWORK_POLICY_NOTES } from "../sandbox/network";
 import { createPreparedSandbox } from "../sandbox/setup";
 import {
@@ -27,8 +39,10 @@ import type {
   AgentClaim,
   CommandLog,
   DemoMode,
+  EvidencePackMeta,
   FileDiff,
   Receipt,
+  SnapshotCleanupEntry,
   VerificationResult,
 } from "../types";
 import {
@@ -123,24 +137,27 @@ export async function runVerifiedAgent(options: {
       errorMessage: `Missing credentials:\n- ${auth.missing.join("\n- ")}`,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
       architectureNotes: architectureNotes(mode),
+      evidence: { status: "skipped", error: "Run aborted before evidence." },
+      cleanupLog: [],
     };
     await saveReceipt(receipt);
     return receipt;
   }
 
-  let agentSandbox: Awaited<
-    ReturnType<typeof createPreparedSandbox>
-  >["sandbox"] | null = null;
+  let agentSandbox: Sandbox | null = null;
+  let verifySandbox: Sandbox | null = null;
   let sandboxRoot = "";
   let fixtureRoot = "";
+  let agentSandboxId: string = UNAVAILABLE;
 
   try {
     // Hidden mode: omit *.hidden.test.ts from the agent sandbox.
-    // No snapshots — agent works in this session; verify uses a fresh sandbox.
+    // Sandboxes stay alive until the evidence pack is written.
     const prepared = await createPreparedSandbox(commandLog, { mode });
     agentSandbox = prepared.sandbox;
     sandboxRoot = prepared.sandboxRoot;
     fixtureRoot = prepared.fixtureRoot;
+    agentSandboxId = agentSandbox.name || UNAVAILABLE;
 
     const beforeFiles: Record<string, string> = {};
     for (const f of TRACKED_RELATIVE) {
@@ -183,7 +200,6 @@ export async function runVerifiedAgent(options: {
       extractSubmitClaim(result.steps, result.text ?? "");
 
     // Backup: loop ended without claim (early text finish or forced-step miss).
-    // One follow-up generateText sharing history, toolChoice locked to submitClaim.
     const ensured = await ensureClaimSubmitted({
       claim: initialClaim,
       steps: [...result.steps],
@@ -193,7 +209,6 @@ export async function runVerifiedAgent(options: {
           model,
           system: instructions,
           tools,
-          // Prior tool/assistant turns + a nudge to claim now.
           messages: buildForcedClaimFollowUpMessages(result.responseMessages),
           toolChoice: { type: "tool", toolName: SUBMIT_CLAIM_TOOL },
           stopWhen: hasToolCall(SUBMIT_CLAIM_TOOL),
@@ -202,7 +217,6 @@ export async function runVerifiedAgent(options: {
       },
     });
 
-    // Prefer claimBox (tool execute) over step parsing when the follow-up ran.
     const claim = claimBox.current?.submitted
       ? claimBox.current
       : ensured.claim;
@@ -230,13 +244,12 @@ export async function runVerifiedAgent(options: {
       commandLog,
     );
 
-    // Capture agent pricing.ts, then dispose the agent sandbox (no snapshot).
     const agentPricing = await readAgentPricing(agentSandbox);
-    await disposeSandboxQuietly(agentSandbox, { deleteOrphanSnapshots: true });
-    agentSandbox = null;
 
     // Fresh pristine fixture + agent diff + held-out hidden tests.
+    // Caller owns sandbox dispose — only after evidence pack write.
     const verify = await independentVerify(agentPricing, commandLog);
+    verifySandbox = verify.sandbox;
     const verified = verify.tests.passed === true;
     const verdict = decideVerdict({
       claimSubmitted: claim.submitted,
@@ -245,6 +258,93 @@ export async function runVerifiedAgent(options: {
     });
 
     const finishedAt = new Date().toISOString();
+    const notes = architectureNotes(mode, maxSteps, fixtureRoot);
+
+    // Observe any snapshots before cleanup (normally none).
+    const observed: ObservedSnapshot[] = [
+      ...(await listSandboxSnapshotsQuietly(agentSandbox)),
+      ...(await listSandboxSnapshotsQuietly(verifySandbox)),
+    ];
+
+    let pack = buildEvidencePack({
+      receiptId: id,
+      mode,
+      createdAt,
+      finishedAt,
+      verdict,
+      modelConfigured: model,
+      claim,
+      diffs,
+      agentTests: agentTestsAfter ?? agentTestsBefore,
+      independentTests: verify.tests,
+      visibleTests: verify.visibleTests,
+      hiddenTests: verify.hiddenTests,
+      hiddenTestSource:
+        mode === "hidden" ? verify.hiddenTestSource : undefined,
+      llmSteps,
+      totals: sumLlmTotals(llmSteps),
+      commands: commandLog,
+      agentSandboxId,
+      verificationSandboxId: verify.verificationSandboxId,
+      snapshotsCreated: observed.map((s) => ({
+        snapshotId: s.snapshotId,
+        sandboxId: s.sandboxId,
+        createdAt: s.createdAt,
+        sizeBytes: s.sizeBytes,
+      })),
+      cleanupLog: [],
+      networkPolicyNotes: NETWORK_POLICY_NOTES,
+      architectureNotes: notes,
+    });
+
+    // Evidence first — never delete snapshots/sandboxes until this succeeds.
+    const written = await saveEvidencePack(id, pack);
+    let evidence: EvidencePackMeta;
+    let cleanupLog: SnapshotCleanupEntry[] = [];
+
+    if (written.ok) {
+      evidence = evidencePackMetaFromWritten({
+        pathname: written.pathname,
+        pack,
+        writtenAt: new Date().toISOString(),
+      });
+      cleanupLog = await cleanupAfterEvidence({
+        evidenceWritten: true,
+        sandboxes: [
+          { sandbox: agentSandbox, role: "agent" },
+          { sandbox: verifySandbox, role: "verify" },
+        ],
+        observedSnapshots: observed,
+      });
+      agentSandbox = null;
+      verifySandbox = null;
+
+      // Refresh pack + receipt with cleanup audit (rewrite pack with hashes).
+      pack = withUpdatedCleanupLog(pack, cleanupLog);
+      const rewritten = await saveEvidencePack(id, pack);
+      if (rewritten.ok) {
+        evidence = evidencePackMetaFromWritten({
+          pathname: rewritten.pathname,
+          pack,
+          writtenAt: new Date().toISOString(),
+        });
+      }
+    } else {
+      evidence = evidencePackMetaFailed(
+        written.error ?? "Evidence pack write failed.",
+      );
+      cleanupLog = await cleanupAfterEvidence({
+        evidenceWritten: false,
+        sandboxes: [
+          { sandbox: agentSandbox, role: "agent" },
+          { sandbox: verifySandbox, role: "verify" },
+        ],
+        observedSnapshots: observed,
+      });
+      agentSandbox = null;
+      verifySandbox = null;
+    }
+
     const receipt: Receipt = {
       id,
       createdAt,
@@ -273,13 +373,23 @@ export async function runVerifiedAgent(options: {
       hiddenTestSource: mode === "hidden" ? verify.hiddenTestSource : undefined,
       verdict,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
-      architectureNotes: architectureNotes(mode, maxSteps, fixtureRoot),
+      architectureNotes: notes,
+      agentSandboxId,
+      evidence,
+      cleanupLog,
     };
 
     await saveReceipt(receipt);
     return receipt;
   } catch (err) {
-    await disposeSandboxQuietly(agentSandbox, { deleteOrphanSnapshots: true });
+    // Error path: still try to avoid silent snapshot loss — stop without
+    // orphan delete if we never wrote an evidence pack.
+    await disposeSandboxQuietly(agentSandbox, {
+      deleteOrphanSnapshots: false,
+    });
+    await disposeSandboxQuietly(verifySandbox, {
+      deleteOrphanSnapshots: false,
+    });
 
     const message = err instanceof Error ? err.message : String(err);
     const receipt: Receipt = {
@@ -301,6 +411,12 @@ export async function runVerifiedAgent(options: {
       errorMessage: message,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
       architectureNotes: architectureNotes(mode, undefined, fixtureRoot),
+      agentSandboxId,
+      evidence: {
+        status: "failed",
+        error: "Run errored before evidence pack could be written.",
+      },
+      cleanupLog: [],
     };
     await saveReceipt(receipt);
     return receipt;
@@ -321,8 +437,8 @@ function architectureNotes(
     "Sandbox tools: runCommand, readFile, writeFile, submitClaim (writeFile allowlisted to src/pricing.ts only).",
     "Final claim is structured via submitClaim (fixed, summary, filesChanged, testsRun); stopWhen=hasToolCall(submitClaim).",
     "Claim guarantee: prepareStep forces toolChoice=submitClaim on the final allowed step; if still missing, one generateText follow-up with the same history + forced submitClaim. Honest fixed=false is allowed; no-claim only after errors/refusal.",
-    "No per-run snapshots (Hobby Snapshot Storage is 15 GB lifetime). Agent works in one ephemeral sandbox; verify uses a second fresh sandbox.",
-    "Verification: pristine fixture copy (including held-out *.hidden.test.ts) + agent's pricing.ts only. Sandboxes are deleted afterward (deleteOrphanSnapshots).",
+    "Evidence pack (Blob JSON + sha256 manifest) is the durable proof. Sandbox filesystem snapshots (~800 MiB) are not kept; cleanup runs only after the pack writes successfully.",
+    "Verification: pristine fixture copy (including held-out *.hidden.test.ts) + agent's pricing.ts only. Sandboxes deleted afterward (deleteOrphanSnapshots) once evidence is stored.",
     mode === "hidden"
       ? "Hidden mode: agent sandbox omits *.hidden.test.ts. A natural threshold-only fix can pass visible tests; held-out multi-line cart tests catch cart-wide discount logic."
       : "Normal mode: agent sees the full suite (visible + hidden). Fixing threshold + per-line cart semantics makes independent verify green.",

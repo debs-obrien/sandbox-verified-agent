@@ -165,13 +165,77 @@ export function ReceiptView({ receipt }: { receipt: Receipt }) {
           Receipt <code className="font-mono">{receipt.id}</code> ·{" "}
           {new Date(receipt.createdAt).toLocaleString()}
         </p>
-        <a
-          className="inline-flex items-center rounded-md bg-[var(--ink)] text-[var(--paper)] px-4 py-2 text-sm font-semibold hover:opacity-90 transition"
-          href={`/api/receipt/${receipt.id}`}
-          download={`${receipt.id}.json`}
-        >
-          Download JSON
-        </a>
+        <div className="flex flex-wrap gap-3 items-center">
+          <a
+            className="inline-flex items-center rounded-md bg-[var(--ink)] text-[var(--paper)] px-4 py-2 text-sm font-semibold hover:opacity-90 transition"
+            href={`/api/receipt/${receipt.id}/evidence`}
+            download={`${receipt.id}.evidence.json`}
+          >
+            Download evidence
+          </a>
+          <a
+            className="inline-flex items-center rounded-md border border-[var(--line)] bg-[var(--panel)] text-[var(--ink)] px-4 py-2 text-sm font-semibold hover:opacity-90 transition"
+            href={`/api/receipt/${receipt.id}`}
+            download={`${receipt.id}.json`}
+          >
+            Download receipt JSON
+          </a>
+        </div>
+        {receipt.evidence && (
+          <div className="rounded-md border border-[var(--line)] bg-[var(--panel)] p-4 space-y-3 max-w-2xl">
+            <div className="flex flex-wrap gap-2 items-center">
+              <Badge
+                tone={
+                  receipt.evidence.status === "written"
+                    ? "pass"
+                    : receipt.evidence.status === "failed"
+                      ? "fail"
+                      : "warn"
+                }
+              >
+                evidence: {receipt.evidence.status}
+              </Badge>
+              {typeof receipt.evidence.bytes === "number" && (
+                <Badge tone="neutral">
+                  {(receipt.evidence.bytes / 1024).toFixed(1)} KiB
+                </Badge>
+              )}
+              {typeof receipt.evidence.artifactCount === "number" && (
+                <Badge tone="neutral">
+                  {receipt.evidence.artifactCount} artifacts
+                </Badge>
+              )}
+            </div>
+            <p className="text-sm text-[var(--muted)] leading-relaxed">
+              Complete evidence pack (changed files, diffs, full test output,
+              claim, tokens/cost, sandbox ids, snapshot cleanup log) with a
+              sha256 manifest. Snapshots are not kept — this pack is the proof.
+            </p>
+            {receipt.evidence.artifacts &&
+              receipt.evidence.artifacts.length > 0 && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-[var(--ink)] font-medium">
+                    What&apos;s inside
+                  </summary>
+                  <ul className="mt-2 space-y-1 font-mono text-[12px] text-[var(--muted)] max-h-48 overflow-auto">
+                    {receipt.evidence.artifacts.map((a) => (
+                      <li key={a.path}>
+                        {a.path}{" "}
+                        <span className="opacity-70">
+                          · {a.bytes} B · {a.sha256.slice(0, 12)}…
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            {receipt.evidence.error && (
+              <p className="text-sm text-[var(--fail)]">
+                {receipt.evidence.error}
+              </p>
+            )}
+          </div>
+        )}
       </header>
 
       {receipt.errorMessage && (
@@ -320,12 +384,37 @@ export function ReceiptView({ receipt }: { receipt: Receipt }) {
           <Badge tone="neutral">
             duration: {formatDuration(receipt.durationMs)}
           </Badge>
+          {receipt.agentSandboxId && (
+            <Badge tone="neutral">
+              agent sandbox: {String(receipt.agentSandboxId)}
+            </Badge>
+          )}
           {receipt.totals.stepsMissingCost > 0 && (
             <Badge tone="warn">
               {receipt.totals.stepsMissingCost} step(s) missing cost
             </Badge>
           )}
         </div>
+        {receipt.cleanupLog && receipt.cleanupLog.length > 0 && (
+          <div className="mt-4">
+            <p className="text-sm text-[var(--muted)] mb-2">
+              Snapshot / sandbox cleanup (after evidence write)
+            </p>
+            <ul className="space-y-1 font-mono text-[12px] text-[var(--muted)]">
+              {receipt.cleanupLog.map((c, i) => (
+                <li key={`${c.kind}-${c.id}-${i}`}>
+                  {c.kind} {c.id}
+                  {c.deleted
+                    ? ` · deleted ${c.deletedAt ?? ""}`
+                    : c.skipped
+                      ? " · skipped (evidence not written)"
+                      : " · not deleted"}
+                  {c.note ? ` — ${c.note}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </Section>
 
       <Section title="Diff">

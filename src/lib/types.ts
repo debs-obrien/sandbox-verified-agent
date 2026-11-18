@@ -105,6 +105,56 @@ export type Verdict =
   | "no-claim"
   | "error";
 
+/** One row in the snapshot/sandbox cleanup audit trail. */
+export type SnapshotCleanupEntry = {
+  kind: "snapshot" | "sandbox";
+  id: string;
+  sandboxId?: string;
+  createdAt?: string;
+  deletedAt: string | null;
+  deleted: boolean;
+  /** skipped = evidence pack not written yet / write failed */
+  skipped?: boolean;
+  error?: string;
+  note?: string;
+};
+
+export type EvidenceArtifactMeta = {
+  path: string;
+  sha256: string;
+  bytes: number;
+};
+
+/** Pointer + integrity summary stored on the receipt (pack lives in Blob). */
+export type EvidencePackMeta = {
+  status: "written" | "failed" | "skipped";
+  pathname?: string;
+  bytes?: number;
+  /** sha256 of the full evidence-pack JSON body */
+  sha256?: string;
+  writtenAt?: string;
+  artifactCount?: number;
+  artifacts?: EvidenceArtifactMeta[];
+  error?: string;
+};
+
+/** Downloadable evidence pack (Blob JSON). Secrets must never appear here. */
+export type EvidencePack = {
+  version: 1;
+  receiptId: string;
+  mode: DemoMode;
+  createdAt: string;
+  finishedAt?: string;
+  verdict: Verdict;
+  manifest: {
+    algorithm: "sha256";
+    createdAt: string;
+    artifacts: EvidenceArtifactMeta[];
+  };
+  /** path → UTF-8 file body */
+  artifacts: Record<string, string>;
+};
+
 export type Receipt = {
   id: string;
   createdAt: string;
@@ -128,6 +178,12 @@ export type Receipt = {
   errorMessage?: string;
   networkPolicyNotes: string[];
   architectureNotes: string[];
+  /** Agent sandbox name/id for this run. */
+  agentSandboxId?: string | Unavailable;
+  /** Durable evidence pack (Blob); written before snapshot/sandbox cleanup. */
+  evidence?: EvidencePackMeta;
+  /** Snapshot/sandbox deletion audit (after evidence pack write). */
+  cleanupLog?: SnapshotCleanupEntry[];
 };
 
 export type RunRequest = {

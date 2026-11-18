@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { get, put } from "@vercel/blob";
-import type { Receipt } from "../types";
+import type { EvidencePack, Receipt } from "../types";
 import { hasBlobToken } from "../config";
 
 /**
@@ -11,9 +11,11 @@ import { hasBlobToken } from "../config";
  * - Local-dev fallback: ./data/receipts on the filesystem.
  * - In-memory cache for same-instance reads after a run.
  * - Checked-in samples/ remain a read-only offline fallback.
+ * - Evidence packs live beside receipts: receipts/{id}.evidence.json
  */
 
 const memory = new Map<string, Receipt>();
+const evidenceMemory = new Map<string, EvidencePack>();
 const LOCAL_DATA_DIR = path.join(process.cwd(), "data", "receipts");
 const SAMPLES_DIR = path.join(process.cwd(), "samples");
 const BLOB_PREFIX = "receipts";
@@ -27,6 +29,10 @@ function safeId(id: string): string {
 
 function blobPathname(id: string): string {
   return `${BLOB_PREFIX}/${id}.json`;
+}
+
+export function evidenceBlobPathname(id: string): string {
+  return `${BLOB_PREFIX}/${id}.evidence.json`;
 }
 
 async function streamToString(
@@ -145,10 +151,132 @@ export async function loadReceipt(id: string): Promise<Receipt | null> {
   return null;
 }
 
+async function saveEvidenceToBlob(id: string, json: string): Promise<boolean> {
+  if (!hasBlobToken()) return false;
+  try {
+    await put(evidenceBlobPathname(id), json, {
+      access: "private",
+      contentType: "application/json",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+    return true;
+  } catch (err) {
+    console.error("Blob put failed for evidence pack", id, err);
+    return false;
+  }
+}
+
+async function loadEvidenceFromBlob(id: string): Promise<EvidencePack | null> {
+  if (!hasBlobToken()) return null;
+  try {
+    const result = await get(evidenceBlobPathname(id), {
+      access: "private",
+      useCache: false,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+    if (!result || result.statusCode !== 200 || !result.stream) return null;
+    const text = await streamToString(result.stream);
+    return JSON.parse(text) as EvidencePack;
+  } catch (err) {
+    console.error("Blob get failed for evidence pack", id, err);
+    return null;
+  }
+}
+
+async function saveEvidenceToLocal(id: string, json: string): Promise<boolean> {
+  try {
+    await mkdir(LOCAL_DATA_DIR, { recursive: true });
+    await writeFile(
+      /*turbopackIgnore: true*/ path.join(
+        LOCAL_DATA_DIR,
+        `${id}.evidence.json`,
+      ),
+      json,
+      "utf8",
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadEvidenceFromLocal(id: string): Promise<EvidencePack | null> {
+  try {
+    const raw = await readFile(
+      /*turbopackIgnore: true*/ path.join(
+        LOCAL_DATA_DIR,
+        `${id}.evidence.json`,
+      ),
+      "utf8",
+    );
+    return JSON.parse(raw) as EvidencePack;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist the evidence pack. Returns ok=false on total failure so callers
+ * can skip snapshot deletion (do not silently lose proof).
+ */
+export async function saveEvidencePack(
+  id: string,
+  pack: EvidencePack,
+): Promise<{ ok: boolean; pathname: string; error?: string }> {
+  const safe = safeId(id);
+  const pathname = evidenceBlobPathname(safe);
+  const json = JSON.stringify(pack, null, 2);
+  evidenceMemory.set(safe, pack);
+
+  const blobOk = await saveEvidenceToBlob(safe, json);
+  if (blobOk) return { ok: true, pathname };
+
+  const localOk = await saveEvidenceToLocal(safe, json);
+  if (localOk) {
+    return {
+      ok: true,
+      pathname: path.join(LOCAL_DATA_DIR, `${safe}.evidence.json`),
+    };
+  }
+
+  evidenceMemory.delete(safe);
+  return {
+    ok: false,
+    pathname,
+    error: "Failed to write evidence pack to Blob and local disk.",
+  };
+}
+
+export async function loadEvidencePack(
+  id: string,
+): Promise<EvidencePack | null> {
+  const safe = safeId(id);
+  const fromMem = evidenceMemory.get(safe);
+  if (fromMem) return fromMem;
+
+  const fromBlob = await loadEvidenceFromBlob(safe);
+  if (fromBlob) {
+    evidenceMemory.set(safe, fromBlob);
+    return fromBlob;
+  }
+
+  const fromLocal = await loadEvidenceFromLocal(safe);
+  if (fromLocal) {
+    evidenceMemory.set(safe, fromLocal);
+    return fromLocal;
+  }
+
+  return null;
+}
+
 /** Test helpers — not used in production paths. */
 export const __test = {
   memory,
+  evidenceMemory,
   blobPathname,
+  evidenceBlobPathname,
   safeId,
   hasBlobToken,
   LOCAL_DATA_DIR,

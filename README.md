@@ -39,7 +39,7 @@ flowchart LR
     UI --> Receipt
   end
 
-  subgraph AgentSBX["Agent sandbox — ephemeral, no snapshot"]
+  subgraph AgentSBX["Agent sandbox — ephemeral"]
     Fix[fixture copy]
     Visible[visible tests only in hidden mode]
     Agent -->|runCommand / readFile / writeFile| Fix
@@ -51,6 +51,10 @@ flowchart LR
     Tests[vitest full suite]
     Pristine --> Diff --> Tests --> Receipt
   end
+
+  Evidence[(Evidence pack in Blob)]
+  Receipt --> Evidence
+  Evidence -->|then delete sandboxes / orphan snaps| Cleanup[Cleanup log]
 ```
 
 ## The fixture
@@ -215,13 +219,41 @@ Function duration: `/api/run` sets `maxDuration = 300` (Hobby cap). Sandbox sess
 - Side-by-side: structured `submitClaim` + files changed + tests it ran vs fresh sandbox id + visible/hidden results + failing output
 - Steps, tokens, cost, model, duration, and the diff
 - After hidden-mode verification: held-out test source reveal
-- **Download JSON** of the same payload (`/api/receipt/<id>`)
+- **Download evidence** — complete evidence pack (`/api/receipt/<id>/evidence`)
+- **Download receipt JSON** (`/api/receipt/<id>`)
+
+## Evidence pack (why snapshots are not kept)
+
+Hobby **Snapshot Storage** is a **15 GB lifetime** budget. A single sandbox snapshot is ~823 MiB of filesystem image — useful for resume, **not** for human/audit evidence. This demo therefore:
+
+1. Builds a durable **evidence pack** (JSON bundle in Vercel Blob beside the receipt).
+2. Writes that pack **before** deleting sandboxes / orphan snapshots.
+3. If the pack write fails, snapshot/orphan deletion is **skipped** (sandbox is stopped only); the receipt records `evidence.status: "failed"` so data is not silently lost.
+
+### What’s in the pack
+
+| Artifact | Contents |
+| --- | --- |
+| `claim.json` | Structured `submitClaim` payload |
+| `files/*` + `diffs/*.diff` | Final changed file(s) + unified diffs (+ before) |
+| `tests/independent.*` | Full independent suite JSON + raw stdout/stderr + exit/per-test |
+| `tests/agent.*` | Agent workspace test results (when present) |
+| `hidden-tests/…` | Held-out test source (hidden mode) |
+| `llm/steps.json` + `llm/totals.json` | Step/token/cost summary |
+| `sandboxes.json` | Agent + verification sandbox ids |
+| `snapshots.json` | Snapshot ids observed (usually none — we don’t create them) |
+| `cleanup-log.json` | When each sandbox/snapshot was deleted (or skipped) |
+| `commands.json` / `notes.json` / `meta.json` | Command log + architecture notes |
+
+Every artifact has a **sha256** in `manifest.artifacts` (tamper-evident). Secrets (tokens, OIDC, env values) are scrubbed and must never appear in the pack.
+
+Download: **Download evidence** on `/receipt/<id>` or `GET /api/receipt/<id>/evidence`.
 
 ## What we learned / rough edges
 
 1. **Alias / resolved `modelId`** — Gateway may echo the requested alias rather than a versioned resolved id. Related: [vercel/ai#21213](https://github.com/vercel/ai/issues/21213).
 2. **`providerMetadata.gateway.cost` is not always present** — missing → `"unavailable"`, never invented.
-3. **Hobby Snapshot Storage is 15 GB lifetime** — this demo does **not** create per-run snapshots. Agent + verify each use an ephemeral sandbox; sandboxes are deleted afterward (`deleteOrphanSnapshots`). Creating before/after snaps (~800 MiB each, 24h TTL) will fill Hobby quickly.
+3. **Hobby Snapshot Storage is 15 GB lifetime** — this demo does **not** create per-run snapshots. Proof lives in the **evidence pack**; sandboxes are deleted only after that pack is written (`deleteOrphanSnapshots`). Creating before/after snaps (~800 MiB each) will fill Hobby quickly.
 4. **`runCommand` has no shell** — pipes/`&&` need `bash -c`. Non-zero exits do **not** throw.
 5. **File methods vs cwd** — prefer absolute paths under `/vercel/sandbox` after `mkdir -p`.
 6. **OIDC is a request header on Functions** — naive `process.env.VERCEL_OIDC_TOKEN` checks false-negative on deploy.

@@ -48,6 +48,9 @@ function splitVisibleHidden(tests: TestCaseResult[]): {
  * Independent verification the agent cannot touch:
  * fresh pristine fixture (including hidden tests) + agent's pricing.ts only.
  * No snapshots — avoids Hobby Snapshot Storage accumulation.
+ *
+ * Caller owns cleanup: dispose the returned sandbox only AFTER the evidence
+ * pack is successfully written (see cleanupAfterEvidence).
  */
 export async function independentVerify(
   agentPricingSource: string,
@@ -58,6 +61,8 @@ export async function independentVerify(
   hiddenTests: TestCaseResult[];
   verificationSandboxId: string;
   hiddenTestSource: string;
+  /** Live verify sandbox — dispose via cleanupAfterEvidence after pack write. */
+  sandbox: Sandbox;
 }> {
   const prepared = await createPreparedSandbox(commandLog, {
     includeHiddenTests: true,
@@ -104,10 +109,13 @@ export async function independentVerify(
       hiddenTests,
       verificationSandboxId: verifyBox.name || UNAVAILABLE,
       hiddenTestSource,
+      sandbox: verifyBox,
     };
-  } finally {
-    // Cleanup must never throw into the caller / affect the receipt verdict.
-    await disposeSandboxQuietly(verifyBox, { deleteOrphanSnapshots: true });
+  } catch (err) {
+    // On verify failure before return, still hand sandbox back via throw path:
+    // dispose best-effort so we do not leak if caller never gets the handle.
+    await disposeSandboxQuietly(verifyBox, { deleteOrphanSnapshots: false });
+    throw err;
   }
 }
 
