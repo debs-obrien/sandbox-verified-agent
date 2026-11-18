@@ -8,6 +8,8 @@ A green chat message is not evidence. The receipt is.
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdebs-obrien%2Fsandbox-verified-agent&env=AI_GATEWAY_API_KEY,ALLOW_PUBLIC_RUNS&envDescription=Enable%20OIDC%20on%20the%20project%2C%20connect%20a%20Blob%20store%20(BLOB_READ_WRITE_TOKEN)%2C%20and%20optionally%20set%20AI_GATEWAY_API_KEY.%20Set%20ALLOW_PUBLIC_RUNS%3Dtrue%20only%20behind%20Deployment%20Protection.&project-name=sandbox-verified-agent&repository-name=sandbox-verified-agent)
 
+> **Note:** Until [PR #1](https://github.com/debs-obrien/sandbox-verified-agent/pull/1) merges, **`main` only has the initial commit**. The Deploy button clones `main`, so it will not include the sandbox-verified-agent demo yet — use this PR branch / preview for the full template.
+
 ## Who has this problem?
 
 Teams adopting coding agents (support fixes, small refactors, “just make the tests green”) keep asking:
@@ -169,14 +171,28 @@ Receipts must survive across function instances. Connect a **Blob** store so `BL
 ### Protect `/api/run` on public deploys
 
 ```bash
-# Recommended for scripted/API access:
+# Recommended for scripted/API access + on-camera UI demos:
 RUN_SECRET=some-long-random
 
-# Or, only behind Vercel Deployment Protection:
+# Or, only behind Vercel Deployment Protection (no RUN_SECRET set):
 ALLOW_PUBLIC_RUNS=true
 ```
 
-Without one of those, production returns `403`. Client-supplied `model` overrides are ignored. Per-instance concurrency/hourly limits apply (`RUN_MAX_CONCURRENT`, `RUN_MAX_PER_HOUR`).
+Without one of those, production returns `403`. Client-supplied `model` overrides are ignored. Per-instance concurrency/hourly limits still apply (`RUN_MAX_CONCURRENT`, `RUN_MAX_PER_HOUR`).
+
+#### Presenter flow (Shareable Link + Run buttons)
+
+Deployment Protection keeps the preview off the open internet. Viewers join via a **Vercel Shareable Link**. That link does **not** include `RUN_SECRET` — and the app never embeds the secret in HTML/JS.
+
+On camera, the presenter:
+
+1. Opens the Shareable Link (or the protected preview while signed in).
+2. Pastes `RUN_SECRET` into **Presenter run secret** on the home page → **Save** (stored in `sessionStorage` for this tab only).
+3. Clicks **Run normal** or **Run hidden-tests demo**. The UI sends `x-run-secret`; rate limits still apply.
+
+Clear the field (or close the tab) when done. Curl/API callers keep using `Authorization: Bearer $RUN_SECRET` / `x-run-secret` as before.
+
+If `RUN_SECRET` is unset and `ALLOW_PUBLIC_RUNS=true`, the buttons work without the presenter field — only do that behind Deployment Protection.
 
 See `.env.example`.
 
@@ -217,7 +233,7 @@ Function duration: `/api/run` sets `maxDuration = 300` (Hobby cap). Sandbox sess
 
 - Big verdict badge: **Verified** / **Caught: claim not supported** / **Not fixed** / **No claim submitted**
 - Side-by-side: structured `submitClaim` + files changed + tests it ran vs fresh sandbox id + visible/hidden results + failing output
-- Steps, tokens, cost, model, duration, and the diff
+- Steps, tokens in/out/**total**, cost, model, duration, and the diff
 - After hidden-mode verification: held-out test source reveal
 - **Download evidence** — complete evidence pack (`/api/receipt/<id>/evidence`)
 - **Download receipt JSON** (`/api/receipt/<id>`)

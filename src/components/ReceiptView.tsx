@@ -378,6 +378,9 @@ export function ReceiptView({ receipt }: { receipt: Receipt }) {
             tokens out: {formatTokens(receipt.totals.outputTokens)}
           </Badge>
           <Badge tone="neutral">
+            tokens total: {formatTokens(receipt.totals.totalTokens)}
+          </Badge>
+          <Badge tone="neutral">
             cost USD: {String(receipt.totals.costUsd)}
           </Badge>
           <Badge tone="neutral">model: {receipt.modelConfigured}</Badge>
