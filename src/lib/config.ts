@@ -19,8 +19,12 @@ export const FIXTURE_DIRNAME = "buggy-pricing";
 /** Truncate command stdout/stderr in the receipt. */
 export const LOG_TRUNCATE_CHARS = 4_000;
 
-/** Max agent steps (kept modest for Hobby 300s). Same for normal + hidden. */
-export const NORMAL_MAX_STEPS = 8;
+/**
+ * Max agent steps (kept modest for Hobby 300s). Same for normal + hidden.
+ * Final step is reserved for forced submitClaim (prepareStep), so the agent
+ * needs enough earlier steps to fix both threshold + cart bugs in normal mode.
+ */
+export const NORMAL_MAX_STEPS = 12;
 
 /**
  * Hobby plan function maxDuration is 300s. Keep the sandbox session under
