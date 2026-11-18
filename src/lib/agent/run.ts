@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { ToolLoopAgent, hasToolCall, isStepCount } from "ai";
+import {
+  ToolLoopAgent,
+  generateText,
+  hasToolCall,
+  isStepCount,
+} from "ai";
 import { resolveAuthStatus } from "../auth";
 import { DEFAULT_MODEL, FIXTURE_DIRNAME, NORMAL_MAX_STEPS } from "../config";
 import { unifiedDiff } from "../receipt/diff";
@@ -26,6 +31,12 @@ import type {
   Receipt,
   VerificationResult,
 } from "../types";
+import {
+  buildForcedClaimFollowUpMessages,
+  ensureClaimSubmitted,
+  forceClaimPrepareStep,
+  SUBMIT_CLAIM_TOOL,
+} from "./force-claim";
 import {
   createSandboxTools,
   emptyClaim,
@@ -150,22 +161,53 @@ export async function runVerifiedAgent(options: {
       claimBox,
     });
 
+    const instructions = instructionsFor(mode, fixtureRoot);
     const agent = new ToolLoopAgent({
       model,
-      instructions: instructionsFor(mode, fixtureRoot),
+      instructions,
       tools,
-      stopWhen: [hasToolCall("submitClaim"), isStepCount(maxSteps)],
+      stopWhen: [hasToolCall(SUBMIT_CLAIM_TOOL), isStepCount(maxSteps)],
       toolChoice: "auto",
+      // Final allowed step: force submitClaim so isStepCount cannot end a
+      // green run with narration-only / no-claim.
+      prepareStep: ({ stepNumber }) =>
+        forceClaimPrepareStep({ stepNumber, maxSteps }),
     });
 
     const result = await agent.generate({
       prompt: userPromptFor(mode, bugReport),
     });
 
-    const llmSteps = extractLlmSteps(result.steps);
-    const claim =
+    const initialClaim =
       claimBox.current ??
       extractSubmitClaim(result.steps, result.text ?? "");
+
+    // Backup: loop ended without claim (early text finish or forced-step miss).
+    // One follow-up generateText sharing history, toolChoice locked to submitClaim.
+    const ensured = await ensureClaimSubmitted({
+      claim: initialClaim,
+      steps: [...result.steps],
+      rawText: result.text ?? "",
+      runFollowUp: async () => {
+        const followUp = await generateText({
+          model,
+          system: instructions,
+          tools,
+          // Prior tool/assistant turns + a nudge to claim now.
+          messages: buildForcedClaimFollowUpMessages(result.responseMessages),
+          toolChoice: { type: "tool", toolName: SUBMIT_CLAIM_TOOL },
+          stopWhen: hasToolCall(SUBMIT_CLAIM_TOOL),
+        });
+        return { steps: [...followUp.steps], text: followUp.text };
+      },
+    });
+
+    // Prefer claimBox (tool execute) over step parsing when the follow-up ran.
+    const claim = claimBox.current?.submitted
+      ? claimBox.current
+      : ensured.claim;
+
+    const llmSteps = extractLlmSteps(ensured.steps);
 
     const diffs: FileDiff[] = [];
     for (const f of TRACKED_RELATIVE) {
@@ -278,13 +320,14 @@ function architectureNotes(
     "Auth: getVercelOidcToken() (x-vercel-oidc-token header on Vercel, VERCEL_OIDC_TOKEN locally) or AI_GATEWAY_API_KEY / token trio.",
     "Sandbox tools: runCommand, readFile, writeFile, submitClaim (writeFile allowlisted to src/pricing.ts only).",
     "Final claim is structured via submitClaim (fixed, summary, filesChanged, testsRun); stopWhen=hasToolCall(submitClaim).",
+    "Claim guarantee: prepareStep forces toolChoice=submitClaim on the final allowed step; if still missing, one generateText follow-up with the same history + forced submitClaim. Honest fixed=false is allowed; no-claim only after errors/refusal.",
     "No per-run snapshots (Hobby Snapshot Storage is 15 GB lifetime). Agent works in one ephemeral sandbox; verify uses a second fresh sandbox.",
     "Verification: pristine fixture copy (including held-out *.hidden.test.ts) + agent's pricing.ts only. Sandboxes are deleted afterward (deleteOrphanSnapshots).",
     mode === "hidden"
       ? "Hidden mode: agent sandbox omits *.hidden.test.ts. A natural threshold-only fix can pass visible tests; held-out multi-line cart tests catch cart-wide discount logic."
       : "Normal mode: agent sees the full suite (visible + hidden). Fixing threshold + per-line cart semantics makes independent verify green.",
     mode
-      ? `Mode=${mode}; stopWhen=[hasToolCall(submitClaim), isStepCount(${maxSteps ?? "?"})].`
+      ? `Mode=${mode}; stopWhen=[hasToolCall(submitClaim), isStepCount(${maxSteps ?? "?"})]; prepareStep forces claim on last step.`
       : "Mode unset.",
     "Held-out tests are standard practice (similar to SWE-bench). The independent check runs in a sandbox the agent cannot edit.",
   ];

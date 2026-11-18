@@ -160,7 +160,7 @@ export function createSandboxTools(
 
     submitClaim: tool({
       description:
-        "Submit your final structured claim and end the run. Call exactly once when finished.",
+        "Submit your final structured claim and end the run. Call exactly once as soon as workspace tests pass (or when you conclude they will not). Do not narrate after tests — claim immediately.",
       inputSchema: submitClaimInputSchema,
       execute: async (input) => {
         if (claimBox) {
