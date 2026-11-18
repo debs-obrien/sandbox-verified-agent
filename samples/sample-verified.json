@@ -1,0 +1,200 @@
+{
+  "id": "sample-verified",
+  "createdAt": "2026-11-17T12:00:00.000Z",
+  "finishedAt": "2026-11-17T12:02:00.000Z",
+  "durationMs": 120000,
+  "mode": "normal",
+  "isSample": true,
+  "sampleLabel": "synthetic UI fixture — not a live run",
+  "bugReport": "# Customer bug report — #4821\n\n**From:** Maya Chen\n**Subject:** \"Buy 3 get 10% off\" didn't apply\n\nI ordered exactly 3 Navy Hoodies. Banner says Buy 3 get 10% off. Cart charged full price. Friend who bought 4 got the discount.\n",
+  "modelConfigured": "anthropic/claude-haiku-4.5",
+  "agentClaim": {
+    "submitted": true,
+    "claimedFixed": true,
+    "summary": "Changed the bulk-discount threshold from `>` to `>=` and made cartTotalCents sum per-line discounts via applyBulkDiscount.",
+    "filesChanged": ["src/pricing.ts"],
+    "testsRun": "npm test — all visible + hidden tests passed",
+    "rawText": "{\"fixed\":true,\"summary\":\"Changed threshold and cart aggregation\",\"filesChanged\":[\"src/pricing.ts\"],\"testsRun\":\"npm test — pass\"}"
+  },
+  "commands": [
+    {
+      "id": "cmd-1",
+      "command": "npm",
+      "args": ["install"],
+      "cwd": "/vercel/sandbox/buggy-pricing",
+      "exitCode": 0,
+      "stdout": "added 40 packages",
+      "stderr": "",
+      "truncated": false,
+      "at": "2026-11-17T12:00:10.000Z"
+    },
+    {
+      "id": "cmd-2",
+      "command": "npm",
+      "args": ["test"],
+      "cwd": "/vercel/sandbox/buggy-pricing",
+      "exitCode": 1,
+      "stdout": "FAIL applyBulkDiscount (visible) > applies 10% off when buying exactly 3",
+      "stderr": "",
+      "truncated": false,
+      "at": "2026-11-17T12:00:40.000Z"
+    },
+    {
+      "id": "cmd-3",
+      "command": "npm",
+      "args": ["test"],
+      "cwd": "/vercel/sandbox/buggy-pricing",
+      "exitCode": 0,
+      "stdout": "Test Files  2 passed (2)",
+      "stderr": "",
+      "truncated": false,
+      "at": "2026-11-17T12:01:20.000Z"
+    },
+    {
+      "id": "cmd-verify",
+      "command": "npm",
+      "args": ["test"],
+      "cwd": "/vercel/sandbox/buggy-pricing",
+      "exitCode": 0,
+      "stdout": "independent verification pass",
+      "stderr": "",
+      "truncated": false,
+      "at": "2026-11-17T12:01:50.000Z"
+    }
+  ],
+  "llmSteps": [
+    {
+      "stepNumber": 1,
+      "modelId": "anthropic/claude-haiku-4.5",
+      "provider": "anthropic",
+      "canonicalSlug": "anthropic/claude-haiku-4.5",
+      "generationId": "gen_sample_001",
+      "inputTokens": 1200,
+      "outputTokens": 180,
+      "totalTokens": 1380,
+      "costUsd": "0.002100",
+      "finishReason": "tool-calls",
+      "textPreview": "",
+      "toolCalls": [
+        {
+          "toolName": "readFile",
+          "inputPreview": "{\"path\":\"buggy-pricing/src/pricing.ts\"}"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "stepNumber": 2,
+      "modelId": "anthropic/claude-haiku-4.5",
+      "provider": "anthropic",
+      "canonicalSlug": "anthropic/claude-haiku-4.5",
+      "generationId": "gen_sample_002",
+      "inputTokens": 1600,
+      "outputTokens": 220,
+      "totalTokens": 1820,
+      "costUsd": "0.002800",
+      "finishReason": "tool-calls",
+      "textPreview": "",
+      "toolCalls": [
+        {
+          "toolName": "submitClaim",
+          "inputPreview": "{\"fixed\":true,\"summary\":\"Changed threshold and cart aggregation\"}"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "totals": {
+    "inputTokens": 2800,
+    "outputTokens": 400,
+    "totalTokens": 3200,
+    "costUsd": "0.0049",
+    "stepsWithCost": 2,
+    "stepsMissingCost": 0
+  },
+  "diffs": [
+    {
+      "path": "src/pricing.ts",
+      "before": "if (item.quantity > 3) {\n…\nif (totalQuantity > 3) {",
+      "after": "if (item.quantity >= 3) {\n…\nreturn items.reduce((sum, item) => sum + applyBulkDiscount(item), 0);",
+      "unifiedDiff": "--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@\n-if (item.quantity > 3) {\n+if (item.quantity >= 3) {\n@@\n-if (totalQuantity > 3) {\n-  return Math.round(subtotal * 0.9);\n-}\n-return subtotal;\n+return items.reduce((sum, item) => sum + applyBulkDiscount(item), 0);\n"
+    }
+  ],
+  "agentTests": {
+    "passed": true,
+    "exitCode": 0,
+    "stdout": "Test Files  2 passed (2)",
+    "stderr": "",
+    "tests": [
+      {
+        "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+        "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+        "status": "passed",
+        "durationMs": 1
+      },
+      {
+        "name": "discounts each qualifying SKU line independently",
+        "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
+        "status": "passed",
+        "durationMs": 1,
+        "heldOut": true
+      }
+    ],
+    "summary": { "total": 9, "passed": 9, "failed": 0, "skipped": 0 }
+  },
+  "verification": {
+    "independentTests": {
+      "passed": true,
+      "exitCode": 0,
+      "stdout": "Test Files  2 passed (2)",
+      "stderr": "",
+      "tests": [
+        {
+          "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+          "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+          "status": "passed",
+          "durationMs": 1
+        },
+        {
+          "name": "discounts each qualifying SKU line independently",
+          "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
+          "status": "passed",
+          "durationMs": 1,
+          "heldOut": true
+        }
+      ],
+      "summary": { "total": 9, "passed": 9, "failed": 0, "skipped": 0 }
+    },
+    "visibleTests": [
+      {
+        "name": "applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+        "fullName": "applyBulkDiscount (visible) applies 10% off when buying exactly 3 (buy 3 get 10% off)",
+        "status": "passed",
+        "durationMs": 1
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "discounts each qualifying SKU line independently",
+        "fullName": "cartTotalCents (hidden) discounts each qualifying SKU line independently",
+        "status": "passed",
+        "durationMs": 1,
+        "heldOut": true
+      }
+    ],
+    "verified": true,
+    "beforeSnapshotId": "unavailable",
+    "afterSnapshotId": "unavailable",
+    "verificationSandboxId": "sbx_sample_verify",
+    "method": "pristine-plus-diff"
+  },
+  "verdict": "verified",
+  "networkPolicyNotes": [
+    "Install phase: networkPolicy allow-list limited to npm registry hosts.",
+    "Agent + verify phases: networkPolicy set to deny-all (sandbox has no egress).",
+    "LLM calls run on the Next.js host via AI Gateway — AI_GATEWAY_API_KEY / OIDC never enter the sandbox."
+  ],
+  "architectureNotes": [
+    "SAMPLE receipt for UI preview only."
+  ]
+}
