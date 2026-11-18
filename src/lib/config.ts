@@ -24,14 +24,16 @@ export const NORMAL_MAX_STEPS = 8;
 
 /**
  * Hobby plan function maxDuration is 300s. Keep the sandbox session under
- * that so create → install → agent → snapshots → verify can finish.
+ * that so create → install → agent → verify can finish.
  */
 export const FUNCTION_MAX_DURATION_S = 300;
 export const SANDBOX_TIMEOUT_MS = 270_000; // 4.5 minutes
 
 /**
- * Sandbox snapshot expiration: API accepts 0 (never) or >= 1 day.
- * Demo receipts use 1 day.
+ * Demo runs do **not** create snapshots (Hobby Snapshot Storage is 15 GB lifetime).
+ * Verification is pristine fixture + agent diff in a fresh sandbox.
+ * If a snapshot is ever created, prefer deleting it immediately after use.
+ * API still accepts 0 (never) or >= 1 day for expiration when needed.
  */
 export const SNAPSHOT_EXPIRATION_MS = 24 * 60 * 60 * 1000;
 

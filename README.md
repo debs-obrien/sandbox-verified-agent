@@ -39,7 +39,7 @@ flowchart LR
     UI --> Receipt
   end
 
-  subgraph AgentSBX["Agent sandbox"]
+  subgraph AgentSBX["Agent sandbox — ephemeral, no snapshot"]
     Fix[fixture copy]
     Visible[visible tests only in hidden mode]
     Agent -->|runCommand / readFile / writeFile| Fix
@@ -221,12 +221,12 @@ Function duration: `/api/run` sets `maxDuration = 300` (Hobby cap). Sandbox sess
 
 1. **Alias / resolved `modelId`** — Gateway may echo the requested alias rather than a versioned resolved id. Related: [vercel/ai#21213](https://github.com/vercel/ai/issues/21213).
 2. **`providerMetadata.gateway.cost` is not always present** — missing → `"unavailable"`, never invented.
-3. **`sandbox.snapshot()` stops the session** — create a new sandbox from `snapshotId` to keep working.
+3. **Hobby Snapshot Storage is 15 GB lifetime** — this demo does **not** create per-run snapshots. Agent + verify each use an ephemeral sandbox; sandboxes are deleted afterward (`deleteOrphanSnapshots`). Creating before/after snaps (~800 MiB each, 24h TTL) will fill Hobby quickly.
 4. **`runCommand` has no shell** — pipes/`&&` need `bash -c`. Non-zero exits do **not** throw.
 5. **File methods vs cwd** — prefer absolute paths under `/vercel/sandbox` after `mkdir -p`.
 6. **OIDC is a request header on Functions** — naive `process.env.VERCEL_OIDC_TOKEN` checks false-negative on deploy.
 7. **Hobby `maxDuration` is 300s** — keep sandbox timeout under the function budget.
-8. **Snapshot expiration** — Sandbox accepts `0` or `>= 1 day`.
+8. **If you do snapshot** — API accepts `0` or `>= 1 day`; use `Snapshot.delete()` / `keepLastSnapshots: { count: 1, deleteEvicted: true }` so storage does not pile up.
 9. **Receipts across instances** — use Vercel Blob for `/receipt/[id]` after redirect.
 10. **Held-out tests** — omit `*.hidden.test.ts` from the agent copy; verify with pristine fixture + agent diff in a fresh VM.
 11. **Public `/api/run` is paid compute** — gate with `RUN_SECRET` or Deployment Protection + `ALLOW_PUBLIC_RUNS`.

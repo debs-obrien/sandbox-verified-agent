@@ -183,8 +183,8 @@
       }
     ],
     "verified": true,
-    "beforeSnapshotId": "snap_sample_before",
-    "afterSnapshotId": "snap_sample_after",
+    "beforeSnapshotId": "unavailable",
+    "afterSnapshotId": "unavailable",
     "verificationSandboxId": "sbx_sample_verify",
     "method": "pristine-plus-diff"
   },

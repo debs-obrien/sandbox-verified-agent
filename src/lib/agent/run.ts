@@ -8,17 +8,14 @@ import { unifiedDiff } from "../receipt/diff";
 import { extractLlmSteps } from "../receipt/extract-llm-steps";
 import { saveReceipt } from "../receipt/store";
 import { decideVerdict, sumLlmTotals } from "../receipt/totals";
+import { disposeSandboxQuietly } from "../sandbox/cleanup";
 import { resetCommandCounter } from "../sandbox/commands";
 import { NETWORK_POLICY_NOTES } from "../sandbox/network";
-import {
-  createPreparedSandbox,
-  createSandboxFromSnapshot,
-} from "../sandbox/setup";
+import { createPreparedSandbox } from "../sandbox/setup";
 import {
   independentVerify,
   readAgentPricing,
   runFixtureTests,
-  takeSnapshot,
   UNAVAILABLE,
 } from "../sandbox/verify";
 import type {
@@ -39,10 +36,7 @@ import { instructionsFor, userPromptFor } from "./prompts";
 
 const TRACKED_RELATIVE = [`${FIXTURE_DIRNAME}/src/pricing.ts`];
 
-function emptyVerification(
-  beforeSnapshotId: string | typeof UNAVAILABLE = UNAVAILABLE,
-  afterSnapshotId: string | typeof UNAVAILABLE = UNAVAILABLE,
-): VerificationResult {
+function emptyVerification(): VerificationResult {
   return {
     independentTests: {
       passed: false,
@@ -55,8 +49,8 @@ function emptyVerification(
     visibleTests: [],
     hiddenTests: [],
     verified: false,
-    beforeSnapshotId,
-    afterSnapshotId,
+    beforeSnapshotId: UNAVAILABLE,
+    afterSnapshotId: UNAVAILABLE,
     verificationSandboxId: UNAVAILABLE,
     method: "pristine-plus-diff",
   };
@@ -123,8 +117,6 @@ export async function runVerifiedAgent(options: {
     return receipt;
   }
 
-  let beforeSnapshotId: string | typeof UNAVAILABLE = UNAVAILABLE;
-  let afterSnapshotId: string | typeof UNAVAILABLE = UNAVAILABLE;
   let agentSandbox: Awaited<
     ReturnType<typeof createPreparedSandbox>
   >["sandbox"] | null = null;
@@ -133,23 +125,11 @@ export async function runVerifiedAgent(options: {
 
   try {
     // Hidden mode: omit *.hidden.test.ts from the agent sandbox.
+    // No snapshots — agent works in this session; verify uses a fresh sandbox.
     const prepared = await createPreparedSandbox(commandLog, { mode });
     agentSandbox = prepared.sandbox;
     sandboxRoot = prepared.sandboxRoot;
     fixtureRoot = prepared.fixtureRoot;
-
-    // Baseline snapshot BEFORE the agent works (stops this session).
-    const before = await takeSnapshot(agentSandbox);
-    beforeSnapshotId = before.snapshotId;
-
-    // Resume work from the before-snapshot in a fresh session.
-    const resumed = await createSandboxFromSnapshot(
-      before.snapshotId,
-      commandLog,
-    );
-    agentSandbox = resumed.sandbox;
-    sandboxRoot = resumed.sandboxRoot;
-    fixtureRoot = resumed.fixtureRoot;
 
     const beforeFiles: Record<string, string> = {};
     for (const f of TRACKED_RELATIVE) {
@@ -208,11 +188,9 @@ export async function runVerifiedAgent(options: {
       commandLog,
     );
 
-    // Capture agent pricing.ts before tearing down the agent sandbox.
+    // Capture agent pricing.ts, then dispose the agent sandbox (no snapshot).
     const agentPricing = await readAgentPricing(agentSandbox);
-
-    const after = await takeSnapshot(agentSandbox);
-    afterSnapshotId = after.snapshotId;
+    await disposeSandboxQuietly(agentSandbox, { deleteOrphanSnapshots: true });
     agentSandbox = null;
 
     // Fresh pristine fixture + agent diff + held-out hidden tests.
@@ -245,8 +223,8 @@ export async function runVerifiedAgent(options: {
         visibleTests: verify.visibleTests,
         hiddenTests: verify.hiddenTests,
         verified,
-        beforeSnapshotId,
-        afterSnapshotId,
+        beforeSnapshotId: UNAVAILABLE,
+        afterSnapshotId: UNAVAILABLE,
         verificationSandboxId: verify.verificationSandboxId,
         method: "pristine-plus-diff",
       },
@@ -259,9 +237,7 @@ export async function runVerifiedAgent(options: {
     await saveReceipt(receipt);
     return receipt;
   } catch (err) {
-    if (agentSandbox) {
-      await agentSandbox.stop().catch(() => undefined);
-    }
+    await disposeSandboxQuietly(agentSandbox, { deleteOrphanSnapshots: true });
 
     const message = err instanceof Error ? err.message : String(err);
     const receipt: Receipt = {
@@ -278,7 +254,7 @@ export async function runVerifiedAgent(options: {
       llmSteps: [],
       totals: sumLlmTotals([]),
       diffs: [],
-      verification: emptyVerification(beforeSnapshotId, afterSnapshotId),
+      verification: emptyVerification(),
       verdict: "error",
       errorMessage: message,
       networkPolicyNotes: NETWORK_POLICY_NOTES,
@@ -302,8 +278,8 @@ function architectureNotes(
     "Auth: getVercelOidcToken() (x-vercel-oidc-token header on Vercel, VERCEL_OIDC_TOKEN locally) or AI_GATEWAY_API_KEY / token trio.",
     "Sandbox tools: runCommand, readFile, writeFile, submitClaim (writeFile allowlisted to src/pricing.ts only).",
     "Final claim is structured via submitClaim (fixed, summary, filesChanged, testsRun); stopWhen=hasToolCall(submitClaim).",
-    "Verification: pristine fixture copy (including held-out *.hidden.test.ts) + agent's pricing.ts only, in a fresh sandbox the agent never touched.",
-    "Snapshot expiration: 1 day (Sandbox API rejects values between 0 and 1 day exclusive).",
+    "No per-run snapshots (Hobby Snapshot Storage is 15 GB lifetime). Agent works in one ephemeral sandbox; verify uses a second fresh sandbox.",
+    "Verification: pristine fixture copy (including held-out *.hidden.test.ts) + agent's pricing.ts only. Sandboxes are deleted afterward (deleteOrphanSnapshots).",
     mode === "hidden"
       ? "Hidden mode: agent sandbox omits *.hidden.test.ts. A natural threshold-only fix can pass visible tests; held-out multi-line cart tests catch cart-wide discount logic."
       : "Normal mode: agent sees the full suite (visible + hidden). Fixing threshold + per-line cart semantics makes independent verify green.",

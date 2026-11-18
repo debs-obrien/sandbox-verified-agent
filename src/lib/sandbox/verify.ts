@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Sandbox } from "@vercel/sandbox";
-import { FIXTURE_DIRNAME, SNAPSHOT_EXPIRATION_MS } from "../config";
+import { FIXTURE_DIRNAME } from "../config";
 import { parseVitestJson } from "../receipt/parse-vitest";
 import type {
   CommandLog,
@@ -9,21 +9,13 @@ import type {
   TestSuiteResult,
   Unavailable,
 } from "../types";
+import { disposeSandboxQuietly } from "./cleanup";
 import { runLogged } from "./commands";
 import { createPreparedSandbox } from "./setup";
 
 const UNAVAILABLE: Unavailable = "unavailable";
 const RESULTS_REL = `${FIXTURE_DIRNAME}/vitest-results.json`;
 const PRICING_REL = `${FIXTURE_DIRNAME}/src/pricing.ts`;
-
-export async function takeSnapshot(
-  sandbox: Sandbox,
-): Promise<{ snapshotId: string }> {
-  const snap = await sandbox.snapshot({
-    expiration: SNAPSHOT_EXPIRATION_MS,
-  });
-  return { snapshotId: snap.snapshotId };
-}
 
 async function clearStaleResults(sandbox: Sandbox): Promise<void> {
   await sandbox.writeFiles([
@@ -55,6 +47,7 @@ function splitVisibleHidden(tests: TestCaseResult[]): {
 /**
  * Independent verification the agent cannot touch:
  * fresh pristine fixture (including hidden tests) + agent's pricing.ts only.
+ * No snapshots — avoids Hobby Snapshot Storage accumulation.
  */
 export async function independentVerify(
   agentPricingSource: string,
@@ -113,7 +106,8 @@ export async function independentVerify(
       hiddenTestSource,
     };
   } finally {
-    await verifyBox.stop().catch(() => undefined);
+    // Cleanup must never throw into the caller / affect the receipt verdict.
+    await disposeSandboxQuietly(verifyBox, { deleteOrphanSnapshots: true });
   }
 }
 

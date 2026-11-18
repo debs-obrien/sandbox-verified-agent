@@ -222,8 +222,8 @@
       }
     ],
     "verified": false,
-    "beforeSnapshotId": "snap_sample_before_h",
-    "afterSnapshotId": "snap_sample_after_h",
+    "beforeSnapshotId": "unavailable",
+    "afterSnapshotId": "unavailable",
     "verificationSandboxId": "sbx_sample_verify_h",
     "method": "pristine-plus-diff"
   },

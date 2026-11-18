@@ -5,7 +5,6 @@ import {
   FIXTURE_DIRNAME,
   getSandboxCredentials,
   SANDBOX_TIMEOUT_MS,
-  SNAPSHOT_EXPIRATION_MS,
 } from "../config";
 import type { CommandLog, DemoMode } from "../types";
 import { runLogged } from "./commands";
@@ -41,16 +40,21 @@ async function collectFiles(
   return files;
 }
 
+/**
+ * Ephemeral sandboxes only — no snapshot retention policy.
+ * Demo verification is pristine+diff and does not need snapshots.
+ * If a future call still snapshots, keep at most one and delete the rest.
+ */
 function createOpts() {
   const creds = getSandboxCredentials();
   return {
     timeout: SANDBOX_TIMEOUT_MS,
     persistent: false as const,
     resources: { vcpus: 2 },
-    snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+    // Safety net only: if anything snapshots this sandbox, keep ≤1 and delete older.
     keepLastSnapshots: {
-      count: 3,
-      expiration: SNAPSHOT_EXPIRATION_MS,
+      count: 1,
+      deleteEvicted: true,
     },
     ...(creds
       ? { token: creds.token, teamId: creds.teamId, projectId: creds.projectId }
